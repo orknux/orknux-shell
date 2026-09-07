@@ -1,0 +1,24 @@
+# Normalise everything to LF in the repository, whatever the working tree
+# holds — the source is built on Linux CI and read on every platform. The
+# specific rules below override this catch-all, so they come after it: in
+# gitattributes the last matching pattern wins.
+* text=auto eol=lf
+
+# Shell scripts are read by a shell inside a Linux container, and a shebang
+# ending in a carriage return fails as "bad interpreter: /bin/sh^M".
+#
+# The repository stores them with LF, so CI is fine either way. The trap is
+# local: with core.autocrlf on, a fresh checkout on Windows writes CRLF into
+# the working tree, and `docker build` copies the working tree rather than the
+# index. The image then builds cleanly and dies on first start, which is a long
+# way from the cause.
+*.sh text eol=lf
+
+# The same argument for the files a container reads as an entrypoint by another
+# name. `mvnw` is one: the Dockerfile copies it in and runs it with `/bin/sh`,
+# so a carriage return in its shebang builds an image that dies on first start.
+Dockerfile* text eol=lf
+mvnw text eol=lf
+
+# And its counterpart stays a Windows batch file.
+mvnw.cmd text eol=crlf
