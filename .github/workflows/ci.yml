@@ -1,0 +1,179 @@
+name: CI
+
+# Every push and every pull request is built and tested. Only main and release
+# tags are published: an image for a branch nobody has reviewed is a liability
+# rather than a convenience.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+# A second push to the same branch makes the first one's result irrelevant.
+# Tags are exempt: a release build should never be cancelled by what follows it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  IMAGE_NAME: orknux-shell
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # The runner has /bin/sh, so the whole suite runs here, shell tests
+      # included — the ones a Windows checkout without a POSIX sh skips.
+      - name: Build and test
+        run: ./mvnw -B -ntp verify
+
+      - name: Publish test report
+        uses: actions/upload-artifact@v4
+        # Reports matter most when the build failed, which is exactly when the
+        # step before this one stopped the job.
+        if: always()
+        with:
+          name: test-results
+          path: '**/target/surefire-reports/*.xml'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Does the artefact actually run?
+  #
+  # The build proves the code compiles and the suite proves it behaves. Neither
+  # starts the image — the Dockerfile skips tests deliberately — so this job
+  # builds the container, boots it with a token, and speaks one round of the
+  # protocol at it: initialize, then a command through start_process.
+  image:
+    name: Verify image
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t orknux-shell:verify .
+
+      - name: Start it and speak MCP at it
+        run: |
+          docker run -d --name shell-verify -p 18090:8090 \
+            -e ORKNUX_SHELL_TOKEN=verify-token orknux-shell:verify
+          for _ in $(seq 1 60); do
+            if curl -fsS -m 3 -o /dev/null -X POST http://localhost:18090/mcp \
+              -H 'Authorization: Bearer verify-token' -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' 2>/dev/null; then
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' shell-verify 2>/dev/null)" != "true" ]; then
+              docker logs shell-verify 2>&1 | tail -40
+              echo "::error::The container exited while starting"; exit 1
+            fi
+            sleep 2
+          done
+
+          # Without the token: the door has to be shut.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18090/mcp \
+            -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          [ "$code" = "401" ] || { echo "::error::An unauthenticated request was answered $code, not 401"; exit 1; }
+
+          # With it: a session, and a command that answers through it.
+          session=$(curl -fsS -D - -o /dev/null -X POST http://localhost:18090/mcp \
+            -H 'Authorization: Bearer verify-token' -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
+          [ -n "$session" ] || { echo "::error::initialize returned no session id"; exit 1; }
+
+          answer=$(curl -fsS -X POST http://localhost:18090/mcp \
+            -H "Authorization: Bearer verify-token" -H "Mcp-Session-Id: $session" \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start_process","arguments":{"command":"uname -sr"}}}')
+          echo "$answer"
+          echo "$answer" | grep -q 'Linux' || { echo "::error::start_process did not answer with the kernel"; exit 1; }
+
+          # The health probes answer without the token; the metrics only with it.
+          curl -fsS http://localhost:18090/actuator/health/liveness >/dev/null \
+            || { echo "::error::The liveness probe did not answer"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18090/actuator/prometheus)
+          [ "$code" = "401" ] || { echo "::error::Metrics answered $code without the token, not 401"; exit 1; }
+          curl -fsS http://localhost:18090/actuator/prometheus -H 'Authorization: Bearer verify-token' \
+            | grep -q 'orknux_shell_sessions_open' \
+            || { echo "::error::The Prometheus endpoint is missing the sessions gauge"; exit 1; }
+
+          # The bundled DesktopCommander: present and on the PATH.
+          docker exec shell-verify sh -c 'command -v desktop-commander' >/dev/null \
+            || { echo "::error::desktop-commander is not on the image PATH"; exit 1; }
+
+      - name: What the container said
+        if: failure()
+        run: docker logs shell-verify 2>&1 | tail -60
+
+  publish:
+    name: Publish image
+    runs-on: ubuntu-latest
+    # Both: the suite has to pass and the image has to start before anything is
+    # published. Nothing reaches the registry unstarted.
+    needs: [build, image]
+    # Never from a pull request: a fork's pull request must not be able to reach
+    # the registry credentials, and an unmerged change has nothing to publish.
+    #
+    # And not at all where those credentials have not been set — a fork, or this
+    # repository before somebody adds them. Skipped is the honest result: a red
+    # run says the build is broken, and a missing variable is not that.
+    if: github.event_name == 'push' && vars.DOCKERHUB_USERNAME != ''
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # latest follows main; a vX.Y.Z tag also publishes X.Y.Z and X.Y so a
+      # deployment can pin as loosely or as tightly as it wants. Every build is
+      # tagged with its commit as well, which is the only tag that never moves.
+      - name: Work out tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ vars.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The layer cache lives with the workflow, so a build reuses what the
+          # last one resolved instead of downloading the dependency tree again.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
