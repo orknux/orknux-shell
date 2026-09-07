@@ -40,6 +40,7 @@ class McpAPI(
     private val properties: ShellProperties,
     private val mapper: ObjectMapper,
     private val meters: MeterRegistry,
+    private val toolchain: Toolchain,
 ) {
 
     @PostMapping("/mcp", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -93,7 +94,7 @@ class McpAPI(
         "instructions" to
             "A POSIX shell with a private workspace. Everything in this session lives under " +
             "${session.root} — relative paths resolve against it, paths outside it are refused, " +
-            "and the whole workspace is destroyed when the session ends.",
+            "and the whole workspace is destroyed when the session ends." + toolchain.sentence,
     )
 
     /**

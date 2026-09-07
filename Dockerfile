@@ -34,6 +34,15 @@ RUN ./mvnw -B -ntp -Pnative package -DskipTests
 # (`desktop-commander` on the PATH) rather than a second image to run.
 FROM node:22-slim AS runtime
 
+# git, because a coding harness without version control is half a harness — an
+# agent clones, branches, diffs and commits through the shell — and the slim
+# base leaves it out. ca-certificates so `git clone https://…` and `npm` can
+# verify what they fetch. The MCP client is told git is here; see the
+# initialize instructions and the start_process description.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN npm install -g @wonderwhy-er/desktop-commander && npm cache clean --force
 
 # Not root. The container is the real boundary around the process tools — a

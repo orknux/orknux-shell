@@ -37,6 +37,14 @@ native reimplementation:
   `create_directory`, `list_directory`, `move_file`, `get_file_info`.
 - **Search** — `search_files` (by name), `search_code` (by content, as
   `path:line: text`).
+- **GitHub** — `github_login` stores a token for git operations, scoped to the
+  one session that set it; `github_logout` forgets it. The token is written to
+  a credential store **beside** the session's workspace, not in it, and named
+  through a `GIT_CONFIG_GLOBAL` that only this session's processes carry — so a
+  `git clone`/`fetch`/`push` here authenticates, another session with its own
+  token is unaffected, the file tools cannot read the token back out (it is
+  outside the jail), and it is destroyed with the session. Two sessions can
+  hold two different tokens at once with nothing shared.
 
 The jail confines every file and search path, and processes start inside the
 workspace — but a shell command can read whatever the *process* can. The
@@ -47,11 +55,19 @@ minimal and runs as a system user. Run this in a container for anything real.
 
 A GraalVM native executable on a `node:22-slim` base: the server itself starts
 in milliseconds and idles in tens of megabytes, and the base hands agents a
-real toolchain — `sh`, `node`, `npm` — which is most of what a coding harness
-is for. DesktopCommander is bundled too (`desktop-commander` on the PATH), so
-a deployment that wants DC's own stdio surface has it in the same container.
-DC is MIT-licensed, which permits exactly this — redistribution in an image —
-and its license text ships inside the installed package.
+real toolchain — `sh`, `node`, `npm`, and `git` (added on top of the slim
+base, because a coding harness without version control is half a harness) —
+which is most of what a coding harness is for. DesktopCommander is bundled too
+(`desktop-commander` on the PATH), so a deployment that wants DC's own stdio
+surface has it in the same container. DC is MIT-licensed, which permits
+exactly this — redistribution in an image — and its license text ships inside
+the installed package.
+
+The server does not assume this toolchain: at start it probes the PATH for
+`git`, `node`, `npm`, `python3` and `desktop-commander`, and names the ones it
+actually found in the `initialize` instructions. So an agent is told what is
+there — including git — without a round trip to find out, and is never
+promised a tool the jar's host happens not to have.
 
 ## Metrics
 

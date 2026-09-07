@@ -76,6 +76,20 @@ class McpAPITest(
     }
 
     @Test
+    fun `initialize names the toolchain it found, so git is advertised where it is present`() {
+        assumeTrue(sh != null, "no POSIX sh on this machine")
+        val answer = mvc.perform(authed(post("/mcp")).content(rpc("initialize"))).andReturn().response
+        val instructions = mapper.readTree(answer.contentAsString)
+            .path("result").path("instructions").asString()
+        // On a developer's machine or a runner, git is on the PATH and named;
+        // the point under test is that the probe reports what it found rather
+        // than a fixed claim. git is the tool this behaviour was added for.
+        if (Toolchain(ShellProperties(shell = sh!!)).available.any { it.startsWith("git") }) {
+            assertThat(instructions).contains("git", "start_process")
+        }
+    }
+
+    @Test
     fun `a request naming no live session is answered 404`() {
         val answer = mvc.perform(
             authed(post("/mcp")).header("Mcp-Session-Id", "nothing-holds-this").content(rpc("tools/list")),
@@ -106,6 +120,7 @@ class McpAPITest(
             "read_file", "read_multiple_files", "write_file", "edit_block",
             "create_directory", "list_directory", "move_file", "get_file_info",
             "search_files", "search_code",
+            "github_login", "github_logout",
         )
         assertThat(wanted - names).withFailMessage("missing tools: %s", wanted - names).isEmpty()
     }
@@ -206,6 +221,42 @@ class McpAPITest(
     }
 
     @Test
+    fun `github_login scopes a token to its own session, and two sessions do not share one`() {
+        assumeTrue(sh != null, "no POSIX sh on this machine")
+        assumeTrue(git, "no git on this machine")
+        val a = open()
+        val b = open()
+
+        call(a, "github_login", mapOf("token" to "token-for-a", "host" to "github.com"))
+        call(b, "github_login", mapOf("token" to "token-for-b", "host" to "github.com"))
+
+        // Each session's git points at a credential helper in its *own*
+        // directory — proof the two tokens live apart, without a network call.
+        val helperA = text(call(a, "start_process", mapOf("command" to "git config --global --get credential.helper")))
+        val helperB = text(call(b, "start_process", mapOf("command" to "git config --global --get credential.helper")))
+        // open() returns the session id, which is also the name of that
+        // session's credential directory.
+        assertThat(helperA).contains(a)
+        assertThat(helperB).contains(b)
+        assertThat(helperA).doesNotContain(b)
+    }
+
+    @Test
+    fun `the stored token cannot be read back through the jailed file tools`() {
+        assumeTrue(sh != null, "no POSIX sh on this machine")
+        assumeTrue(git, "no git on this machine")
+        val session = open()
+        call(session, "github_login", mapOf("token" to "secret-token", "host" to "github.com"))
+
+        // The credential store lives beside the workspace, not in it, so every
+        // way the file tools might name it lands outside the jail.
+        val escape = call(session, "read_file", mapOf("path" to "../$session.cred/git-credentials"), expectRefusal = true)
+        assertThat(text(escape)).contains("outside this session's workspace")
+        // And nothing token-shaped is sitting in the workspace to be listed.
+        assertThat(text(call(session, "list_directory", mapOf("path" to ".")))).doesNotContain("git-credentials")
+    }
+
+    @Test
     fun `a long command hands back a pid to follow`() {
         assumeTrue(sh != null, "no POSIX sh on this machine")
         val session = open()
@@ -280,6 +331,12 @@ class McpAPITest(
                 probe.waitFor(10, TimeUnit.SECONDS) && probe.exitValue() == 0
             }.getOrDefault(false)
         }
+
+        /** Whether git is on this machine, for the credential-scoping tests. */
+        val git: Boolean = runCatching {
+            val probe = ProcessBuilder("git", "--version").start()
+            probe.waitFor(10, TimeUnit.SECONDS) && probe.exitValue() == 0
+        }.getOrDefault(false)
 
         const val SESSIONS_ROOT = "target/test-sessions"
 

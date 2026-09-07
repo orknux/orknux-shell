@@ -10,9 +10,9 @@ import org.springframework.stereotype.Component
  * "stable tools/list" made structural rather than disciplined.
  */
 @Component
-class ShellTools(processes: ProcessTools, files: FileTools, search: SearchTools) {
+class ShellTools(processes: ProcessTools, files: FileTools, search: SearchTools, git: GitTools) {
 
-    val all: List<Tool> = processes.tools + files.tools + search.tools
+    val all: List<Tool> = processes.tools + files.tools + search.tools + git.tools
 
     private val byName: Map<String, Tool> = all.associateBy(Tool::name)
 

@@ -29,9 +29,11 @@ class ProcessTools(private val properties: ShellProperties) {
     val tools: List<Tool> = listOf(
         Tool(
             name = "start_process",
-            description = "Run a command in a POSIX shell inside this session's workspace. Without timeout_ms it " +
-                "blocks until the command finishes and returns its combined output; with timeout_ms it waits that " +
-                "long, and a command still running is returned as a pid to follow with read_process_output.",
+            description = "Run a command in a POSIX shell inside this session's workspace (git, node and npm are on " +
+                "the PATH in the shipped image — the initialize instructions list what this instance actually has). " +
+                "Without timeout_ms it blocks until the command finishes and returns its combined output; with " +
+                "timeout_ms it waits that long, and a command still running is returned as a pid to follow with " +
+                "read_process_output.",
             parameters = listOf(
                 ToolParameter("command", "string", "A POSIX sh command line."),
                 ToolParameter("cwd", "string", "Working directory, inside the workspace. The workspace root when absent.", required = false),
@@ -94,6 +96,9 @@ class ProcessTools(private val properties: ShellProperties) {
         val builder = ProcessBuilder(properties.shell, "-c", command)
             .directory(directory.toFile())
             .redirectErrorStream(true)
+        // Git reads its credentials from this session's own files and no
+        // other's; see ShellSession.gitEnvironment and the github_login tool.
+        builder.environment().putAll(session.gitEnvironment())
 
         val process = try {
             builder.start()
