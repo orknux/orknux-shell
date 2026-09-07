@@ -1,5 +1,9 @@
 # orknux-shell
 
+[![CI](https://github.com/michjak-szymanski/orknux-shell/actions/workflows/ci.yml/badge.svg)](https://github.com/michjak-szymanski/orknux-shell/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/michjak-szymanski/orknux-shell?sort=semver)](https://github.com/michjak-szymanski/orknux-shell/releases)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 An MCP server that is a POSIX shell with a workspace. Orknux reaches it over
 Streamable HTTP with a bearer token, relays every tool it advertises to a
 granted agent, and each MCP session gets a jailed throwaway directory of its
