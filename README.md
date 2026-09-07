@@ -20,6 +20,12 @@ repository, natively — no DesktopCommander underneath.
   against it, `~` means it, and anything that escapes is refused. The root is
   destroyed when the session is DELETEd, or when it sits idle past
   `ORKNUX_SHELL_SESSION_TIMEOUT`.
+- **A definitive identity.** The `initialize` result carries a marker under
+  `capabilities.experimental["io.mszymanski.orknux-shell"]` —
+  `{ contract, version, sessionIsolation }` — the vendor-extension slot the MCP
+  spec reserves for exactly this. It lets orknux-server tell with certainty
+  that it is talking to an orknux-shell (and to which contract revision), where
+  a `serverInfo.name` string would only be a hint anyone could copy.
 
 ## The tools
 

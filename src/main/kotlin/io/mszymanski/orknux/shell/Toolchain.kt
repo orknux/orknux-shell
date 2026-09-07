@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
 @Component
 class Toolchain(private val properties: ShellProperties) {
 
-    /** The present ones, in the order worth mentioning, e.g. `git 2.47.2`. */
-    val available: List<String> by lazy { CANDIDATES.mapNotNull(::probe) }
+    /** The present ones, by name, in the order worth mentioning. */
+    val available: List<String> by lazy { CANDIDATES.filter(::present) }
 
     /** A sentence for the instructions, or empty when nothing was found. */
     val sentence: String by lazy {
@@ -30,18 +30,26 @@ class Toolchain(private val properties: ShellProperties) {
         }
     }
 
-    /** The tool's version line if it is on the PATH, or null. */
-    private fun probe(tool: String): String? = runCatching {
+    /**
+     * Whether the tool is on the PATH, asked the way a shell asks — `command
+     * -v`, which resolves the name and exits. Deliberately *not* `tool
+     * --version`: some of these are not version-printers but servers, and
+     * `desktop-commander --version` starts DC's stdio server and reads stdin
+     * forever, which once wedged the very first `initialize`. Presence is all
+     * the instructions need, and presence is all this asks for.
+     */
+    private fun present(tool: String): Boolean = runCatching {
         val found = ProcessBuilder(properties.shell, "-c", "command -v $tool")
-            .redirectErrorStream(true).start()
-        if (!found.waitFor(5, TimeUnit.SECONDS) || found.exitValue() != 0) return null
-
-        val version = ProcessBuilder(properties.shell, "-c", "$tool --version 2>/dev/null | head -1")
-            .redirectErrorStream(true).start()
-        val said = version.inputStream.bufferedReader().readText().trim()
-        version.waitFor(5, TimeUnit.SECONDS)
-        said.ifEmpty { tool }
-    }.onFailure { log.debug("Could not probe for {}", tool, it) }.getOrNull()
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        if (!found.waitFor(5, TimeUnit.SECONDS)) {
+            found.destroyForcibly()
+            false
+        } else {
+            found.exitValue() == 0
+        }
+    }.onFailure { log.debug("Could not probe for {}", tool, it) }.getOrDefault(false)
 
     private companion object {
         val log = LoggerFactory.getLogger(Toolchain::class.java)

@@ -89,7 +89,23 @@ class McpAPI(
         // Answered with the version this was written against. A client asking
         // for a newer one is told what it is talking to and decides for itself.
         "protocolVersion" to PROTOCOL,
-        "capabilities" to mapOf("tools" to mapOf("listChanged" to false)),
+        "capabilities" to mapOf(
+            "tools" to mapOf("listChanged" to false),
+            // The definitive "this is orknux-shell" marker. `experimental` is
+            // the vendor-extension map the MCP spec reserves for exactly this,
+            // so a namespaced key here is a signal no ordinary server produces
+            // by accident — orknux-server checks for MARKER and knows with
+            // certainty it is talking to an orknux-shell, and to which contract.
+            // A name in serverInfo is a hint anyone could copy; this is the
+            // handshake proof.
+            "experimental" to mapOf(
+                MARKER to mapOf(
+                    "contract" to CONTRACT,
+                    "version" to properties.version,
+                    "sessionIsolation" to true,
+                ),
+            ),
+        ),
         "serverInfo" to mapOf("name" to "orknux-shell", "version" to properties.version),
         "instructions" to
             "A POSIX shell with a private workspace. Everything in this session lives under " +
@@ -173,6 +189,16 @@ class McpAPI(
 
         /** The revision of the protocol these shapes were written against. */
         const val PROTOCOL = "2025-06-18"
+
+        /**
+         * The key under `capabilities.experimental` that says, past doubt, that
+         * this is an orknux-shell. Reverse-DNS namespaced so it cannot collide
+         * with another vendor's extension; orknux-server keys off exactly this.
+         */
+        const val MARKER = "io.mszymanski.orknux-shell"
+
+        /** The orknux-shell contract revision these shapes implement. */
+        const val CONTRACT = "v3"
 
         const val METHOD_NOT_FOUND = -32601
         const val INVALID_PARAMS = -32602

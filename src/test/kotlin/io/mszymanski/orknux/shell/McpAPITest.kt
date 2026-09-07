@@ -76,6 +76,16 @@ class McpAPITest(
     }
 
     @Test
+    fun `initialize carries the marker that identifies an orknux-shell past doubt`() {
+        val answer = mvc.perform(authed(post("/mcp")).content(rpc("initialize"))).andReturn().response
+        val marker = mapper.readTree(answer.contentAsString)
+            .path("result").path("capabilities").path("experimental").path("io.mszymanski.orknux-shell")
+        assertThat(marker.isMissingNode).isFalse()
+        assertThat(marker.path("contract").asString()).isEqualTo("v3")
+        assertThat(marker.path("sessionIsolation").asBoolean(false)).isTrue()
+    }
+
+    @Test
     fun `initialize names the toolchain it found, so git is advertised where it is present`() {
         assumeTrue(sh != null, "no POSIX sh on this machine")
         val answer = mvc.perform(authed(post("/mcp")).content(rpc("initialize"))).andReturn().response
