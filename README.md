@@ -141,7 +141,10 @@ CI builds and tests every push, boots the built image and speaks one round of
 MCP at it, and publishes to Docker Hub from `main` (as `latest`) and from
 `v*` tags (as `X.Y.Z`, `X.Y`, and the commit sha) — set the
 `DOCKERHUB_USERNAME` variable and `DOCKERHUB_TOKEN` secret on the repository
-to switch publishing on.
+to switch publishing on. It also syncs the Docker Hub repository description
+from `DOCKERHUB.md` after each publish; that step needs a delete-scoped token,
+so set `DOCKERHUB_DESCRIPTION_TOKEN` to one (or give `DOCKERHUB_TOKEN` delete
+scope).
 
 ## License
 

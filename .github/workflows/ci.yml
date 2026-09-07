@@ -27,6 +27,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Docker Hub takes 25,000 bytes of description and not one more. The
+      # action that publishes it truncates silently past that and only warns,
+      # which would leave the reference ending mid-sentence with the end gone —
+      # and nothing red anywhere to say so. Checked here, on the branch that
+      # grew the file, rather than at publish time.
+      - name: The Docker Hub description has to fit
+        run: |
+          limit=25000; comfortable=24000
+          size=$(wc -c < DOCKERHUB.md)
+          echo "DOCKERHUB.md is $size bytes of $limit."
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error file=DOCKERHUB.md::$size bytes, and Docker Hub takes $limit. Shorten it by $((size - limit)) bytes, or move a section into README.md and link to it."
+            exit 1
+          elif [ "$size" -gt "$comfortable" ]; then
+            echo "::warning file=DOCKERHUB.md::$size bytes, $((limit - size)) short of the $limit Docker Hub allows — worth shortening now rather than mid-release."
+          fi
+
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -186,3 +203,25 @@ jobs:
           # last one resolved instead of downloading the dependency tree again.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # And the repository page beside the image. DOCKERHUB.md claims to list
+      # every environment variable this image reads; a claim that is true in git
+      # and out of date on Docker Hub is worse than no claim, and an operator
+      # planning an upgrade reads the one on Docker Hub.
+      #
+      # Last, and after the push, so a description that fails to update cannot
+      # stop the image being published — the image is the release, this is the
+      # page beside it. It goes red on its own, which is the point.
+      #
+      # The token here needs read, write *and* delete: updating a description is
+      # not a push, and a token scoped only to push answers 401 here while
+      # working perfectly in the step above. Set DOCKERHUB_DESCRIPTION_TOKEN to
+      # a delete-scoped token to keep the push token narrow; without it, this
+      # falls back to DOCKERHUB_TOKEN, which then has to carry delete scope.
+      - name: Update the Docker Hub description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN || secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ vars.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          readme-filepath: ./DOCKERHUB.md
