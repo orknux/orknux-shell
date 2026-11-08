@@ -1,0 +1,5 @@
+{
+  "resources": [
+    { "glob": "io/mszymanski/orknux/shell/version.properties" }
+  ]
+}

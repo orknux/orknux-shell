@@ -1,155 +1,111 @@
-# orknux-shell
+# Orknux Shell
 
-[![CI](https://github.com/michjak-szymanski/orknux-shell/actions/workflows/ci.yml/badge.svg)](https://github.com/michjak-szymanski/orknux-shell/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/michjak-szymanski/orknux-shell?sort=semver)](https://github.com/michjak-szymanski/orknux-shell/releases)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+Orknux in the terminal: a chat with one of your workspace's agents, in the
+style of Claude Code, where the agent can also run commands on this computer -
+with your approval wherever your rules, `sudo` or the agent's own caution say
+to ask.
 
-An MCP server that is a POSIX shell with a workspace. Orknux reaches it over
-Streamable HTTP with a bearer token, relays every tool it advertises to a
-granted agent, and each MCP session gets a jailed throwaway directory of its
-own. It implements `docs/orknux-shell-contract.md` from the orknux-server
-repository, natively — no DesktopCommander underneath.
-
-## The shape of it
-
-- **One endpoint.** `POST /mcp` speaks JSON-RPC 2.0 (`initialize`,
-  `tools/list`, `tools/call`, `ping`); `DELETE /mcp` closes a session. No
-  stdio, no SSE — a request and its answer is the whole of the transport.
-- **One credential.** Every request carries `Authorization: Bearer <token>`.
-  The token is configured at deploy and the server refuses to start without
-  one.
-- **One workspace per session.** `initialize` allocates a private root
-  directory and answers with its id in `Mcp-Session-Id`. Every path a tool on
-  that session names must resolve inside that root — relative paths resolve
-  against it, `~` means it, and anything that escapes is refused. The root is
-  destroyed when the session is DELETEd, or when it sits idle past
-  `ORKNUX_SHELL_SESSION_TIMEOUT`.
-- **A definitive identity.** The `initialize` result carries a marker under
-  `capabilities.experimental["io.mszymanski.orknux-shell"]` —
-  `{ contract, version, sessionIsolation }` — the vendor-extension slot the MCP
-  spec reserves for exactly this. It lets orknux-server tell with certainty
-  that it is talking to an orknux-shell (and to which contract revision), where
-  a `serverInfo.name` string would only be a hint anyone could copy.
-
-## The tools
-
-DesktopCommander's names and shapes, which is what the contract requires of a
-native reimplementation:
-
-- **Processes** — `start_process`, `read_process_output`,
-  `interact_with_process`, `force_terminate`, `list_sessions`,
-  `list_processes`, `kill_process`. `start_process` without `timeout_ms`
-  blocks until the command finishes and returns its combined output verbatim
-  (a command that ran and failed is still a normal result; only a shell that
-  could not run at all is an MCP error). With `timeout_ms`, a command still
-  running is handed back as a pid to follow.
-- **Files** — `read_file`, `read_multiple_files`, `write_file`, `edit_block`,
-  `create_directory`, `list_directory`, `move_file`, `get_file_info`.
-- **Search** — `search_files` (by name), `search_code` (by content, as
-  `path:line: text`).
-- **GitHub** — `github_login` stores a token for git operations, scoped to the
-  one session that set it; `github_logout` forgets it. The token is written to
-  a credential store **beside** the session's workspace, not in it, and named
-  through a `GIT_CONFIG_GLOBAL` that only this session's processes carry — so a
-  `git clone`/`fetch`/`push` here authenticates, another session with its own
-  token is unaffected, the file tools cannot read the token back out (it is
-  outside the jail), and it is destroyed with the session. Two sessions can
-  hold two different tokens at once with nothing shared.
-
-The jail confines every file and search path, and processes start inside the
-workspace — but a shell command can read whatever the *process* can. The
-container is the boundary around that, which is why the shipped image is
-minimal and runs as a system user. Run this in a container for anything real.
-
-## The image
-
-A GraalVM native executable on a `node:22-slim` base: the server itself starts
-in milliseconds and idles in tens of megabytes, and the base hands agents a
-real toolchain — `sh`, `node`, `npm`, and `git` (added on top of the slim
-base, because a coding harness without version control is half a harness) —
-which is most of what a coding harness is for. DesktopCommander is bundled too
-(`desktop-commander` on the PATH), so a deployment that wants DC's own stdio
-surface has it in the same container. DC is MIT-licensed, which permits
-exactly this — redistribution in an image — and its license text ships inside
-the installed package.
-
-The server does not assume this toolchain: at start it probes the PATH for
-`git`, `node`, `npm`, `python3` and `desktop-commander`, and names the ones it
-actually found in the `initialize` instructions. So an agent is told what is
-there — including git — without a round trip to find out, and is never
-promised a tool the jar's host happens not to have.
-
-## Metrics
-
-Prometheus at `/actuator/prometheus`, behind the same bearer token as
-everything else — a scrape config carries it as `bearer_token`. Beside the
-JVM and HTTP metrics:
-
-- `orknux_shell_sessions_open` — workspaces that exist right now; a leak here
-  is disk filling in session-sized steps.
-- `orknux_shell_tool_calls_total{tool,outcome}` — every call, split by tool
-  and by how it went (`ok`, `refused`, `unavailable`, `failed`).
-
-The health probes — `/actuator/health/liveness` and `/readiness` — are the
-one thing served without the token, because a Kubernetes probe cannot fetch a
-secret to send and "up or not" gives nothing away.
-
-## Kubernetes
-
-`deploy/kubernetes.yaml` is a sample Deployment and Service with reasoned
-resource requests and limits, probes wired to the health endpoints, a
-read-only root filesystem, and the workspaces on a size-limited `emptyDir`.
-Read the comments in it before copying the numbers — the limits are really a
-budget for the commands agents run, not for the server.
-
-## Running it
-
-```sh
-ORKNUX_SHELL_TOKEN=orkx_something_long ./mvnw spring-boot:run
+```
+orknux-shell                      chat (asks for a server and signs in the first time)
+orknux-shell login [server]       sign in: server, username, password (never echoed)
+orknux-shell login URL --token orkx_...   sign in with an access token instead
+orknux-shell logout
+orknux-shell -p "message"         say one thing, print the answer, leave
+orknux-shell --version
 ```
 
-Or the image:
+## In the chat
 
-```sh
-docker run -p 8090:8090 -e ORKNUX_SHELL_TOKEN=orkx_something_long orknux-shell
+| | |
+|---|---|
+| `/agent [name]` | list the workspace's agents, or switch |
+| `@agent message` | ask another agent in a side conversation, without switching |
+| `/skill [key] [message]` | list the skills the agent can reach, or use one (or type the workspace's marker and the key, e.g. `!deploy`) |
+| `/attach [paths]`, `/detach <n\|all>` | files for the next message; a path pasted on its own is offered as one |
+| `/review [--fix] [branch\|path]` | review the uncommitted changes, a branch, or a path, with git where the Shell runs |
+| `/goal <what> until <condition> [max <n>] [reviewer <model>]` | work at a goal, judged each iteration; `/goal`, `/goal stop` |
+| `/subagents [n]` | the agents this conversation asked, or read one |
+| `/effort [level\|default]` | the model's reasoning effort |
+| `/thinking [collapsed\|expanded\|hidden]` | read the last turn's thinking (also Ctrl+O), or set how it shows |
+| `/open <n>` | open a link of the last answer in the browser |
+| `/usage`, `/resume`, `/clear`, `/workspace`, `/mode`, `/theme`, `/rules`, `/help`, `/quit` | |
+
+Keys: Enter sends; Alt+Enter, Shift+Enter (where the terminal tells them
+apart) or a trailing `\` for a new line; Tab completes everything; Shift+Tab
+cycles the mode; Ctrl+C or Esc interrupts a turn (twice: stop waiting); Ctrl+D
+quits.
+
+Under the input sits a status line - workspace, agent, mode, effort, a running
+goal, tokens in/out (cached) and cost, and whether the local-command door is
+connected - and above it, while a turn runs, one live line drawn in place: the
+thinking as it streams, "Preparing a tool call", "Running terminal_run: git
+status", "Asking Researcher…", "Waiting for your approval", each with its own
+clock.
+
+## Local commands
+
+A chat opened here is opened with `openedIn: SHELL`, which is what lends its
+agent the `terminal_run` tool. While the Shell is open it long-polls
+`/api/terminal/next` for the agent's commands and answers each one. What
+happens to a command, first match winning:
+
+1. a `deny` rule matches: refused, without asking ("Your rules forbid this command.")
+2. an `ask` rule matches: asked
+3. the mode is `ask` (or `plan`): asked, even where an allow rule matches
+4. an `allow` rule matches: run, even for `sudo` or a command the agent marked dangerous
+5. `sudo`, `su`, `doas`, `runas`, `pkexec` at the start of any command in the line, or `dangerous: true`: asked
+6. otherwise: run at once
+
+Asking draws a box with the command, the directory, the agent's reason and a
+red "dangerous" marker where the agent set it, and three choices - Approve,
+Approve for pattern (proposes an anchored rule such as `^git\s+push\b` to edit
+and keeps it in `commands.allow`), Decline (Esc). Output is capped at 30,000
+characters a stream, keeping the end; a command past its time (120 s unless the
+agent asks otherwise) is killed with everything it started.
+
+Commands run in `bash -lc` (or `sh -c`) on Linux and macOS, and in
+`powershell -NoProfile -Command` on Windows, unless `shell` says otherwise.
+
+## Configuration
+
+`~/.config/orknux/orknux-shell.json` (`$XDG_CONFIG_HOME` respected), or
+`%APPDATA%\Orknux\orknux-shell.json` on Windows; `ORKNUX_SHELL_CONFIG` or
+`--config` names another. Written readable by its owner only, because the
+session cookie or token in it is as good as a password while it lasts.
+
+```json
+{
+  "server": "https://orknux.example.com",
+  "mode": "auto",
+  "shell": null,
+  "thinking": "collapsed",
+  "links": "auto",
+  "commands": {
+    "deny": [],
+    "ask": ["\\brm\\s+-[a-zA-Z]*r[a-zA-Z]*f", "\\bmkfs\\b", "\\bdd\\s+if=", "..."],
+    "allow": ["^git\\s+status\\b"]
+  },
+  "theme": { "accent": "#5f8467", "text": "#e4e4e7", "muted": "#71717a",
+             "success": "#10b981", "warning": "#f59e0b", "danger": "#f87171",
+             "thinking": "#c4453d", "code": "#c084fc" }
+}
 ```
 
-Configuration is environment variables, all prefixed the same way:
-
-| Variable | Default | What it decides |
-| --- | --- | --- |
-| `ORKNUX_SHELL_TOKEN` | — (required) | The bearer token every request must carry. |
-| `ORKNUX_SHELL_PORT` | `8090` | The port. |
-| `ORKNUX_SHELL_BINARY` | `/bin/sh` | The shell that runs commands. |
-| `ORKNUX_SHELL_SESSIONS_ROOT` | `$TMPDIR/orknux-shell` | Where session workspaces are made. |
-| `ORKNUX_SHELL_SESSION_TIMEOUT` | `2h` | How long an untouched session keeps its workspace. |
-| `ORKNUX_SHELL_COMMAND_TIMEOUT` | `10m` | The ceiling on a blocking `start_process`. |
-| `ORKNUX_SHELL_READ_TIMEOUT` | `5s` | How long `read_process_output` waits for something new. |
-| `ORKNUX_SHELL_OUTPUT_LIMIT` | `1000000` | How many characters of a process's output are kept. |
-
-One caveat worth knowing on the Orknux side: its `McpClient` gives a call
-thirty seconds by default (`orknux.mcp.timeout`), and a blocking
-`start_process` holds its answer until the command finishes. A deployment that
-runs long commands raises that timeout, or the agent passes `timeout_ms` and
-follows the pid.
+The rules are Java regular expressions found anywhere in the command line,
+case-sensitive; `^...$` anchors one to the whole of it. A rule that does not
+compile is named at start and skipped. The theme is Orknux's own dark palette,
+in 24-bit colour where `COLORTERM` says so and the nearest of 256 otherwise;
+`NO_COLOR` turns colour off. Links are OSC 8 hyperlinks where the terminal draws
+them (`links: osc8|plain` to decide yourself).
 
 ## Building
 
-```sh
-./mvnw verify              # build and test on the JVM; needs a POSIX sh for the shell tests
-./mvnw -Pnative package    # the native executable, with GraalVM installed
-docker build -t orknux-shell .   # compiles natively inside the build stage
+```
+./mvnw package                    # tests, and target/orknux-shell.jar (java -jar works)
+./scripts/build-native.sh         # target/orknux-shell, built in Docker with GraalVM 25
+./mvnw test -Dtest=IntegrationTest -Dorknux.shell.binary=$PWD/target/orknux-shell
 ```
 
-CI builds and tests every push, boots the built image and speaks one round of
-MCP at it, and publishes to Docker Hub from `main` (as `latest`) and from
-`v*` tags (as `X.Y.Z`, `X.Y`, and the commit sha) — set the
-`DOCKERHUB_USERNAME` variable and `DOCKERHUB_TOKEN` secret on the repository
-to switch publishing on. It also syncs the Docker Hub repository description
-from `DOCKERHUB.md` after each publish; that step needs a delete-scoped token,
-so set `DOCKERHUB_DESCRIPTION_TOKEN` to one (or give `DOCKERHUB_TOKEN` delete
-scope).
-
-## License
-
-[AGPL-3.0](LICENSE), the same terms as orknux-server.
+CI (`.github/workflows/build.yml`) builds native binaries for linux-x64 and
+windows-x64 and attaches them to a release on a `v*` tag.
+`ORKNUX_SHELL_TRACE=<file>` logs keys and phases, for a terminal that misbehaves.
