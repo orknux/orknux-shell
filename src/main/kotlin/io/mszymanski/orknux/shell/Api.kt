@@ -135,6 +135,14 @@ class Api(val client: OrknuxClient) {
         client.graphql("query ChatMessages(\$id: ID!) { chatMessages(id: \$id) { role content thinking thinkingMillis at } }", vars("id" to id))
             .list("chatMessages").map { Message(it.str("role") ?: "", it.str("content") ?: "", it.str("thinking"), it.long("thinkingMillis"), it.str("at")) }
 
+    /** Leaves [text] for the turn running in the chat: its agent reads it at its next step, as the person speaking. */
+    fun postDuringTurn(chatId: String, text: String) {
+        client.graphql(
+            "mutation PostDuringTurn(\$id: ID!, \$text: String!) { postChatMessageDuringTurn(id: \$id, text: \$text) }",
+            vars("id" to chatId, "text" to text),
+        )
+    }
+
     /** Whether My Claude Code is offered here, why not where it is not, and whether the caller's Claude Code is connected. */
     fun claudeCode(): ClaudeCodeStatus? = runCatching {
         client.graphql("query { claudeCodeChat { available reason connected } }").get("claudeCodeChat")?.let {

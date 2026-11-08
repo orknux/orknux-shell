@@ -951,7 +951,7 @@ class Interactive(
         val typing = buildList {
             queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
             if (queued.isNotEmpty() && region.active) add("")
-            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
+            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends · Alt+Enter sends it now" else "▏"))
             if (region.active && aheadChoices.isNotEmpty()) {
                 val at = aheadAt.coerceIn(0, aheadChoices.lastIndex)
                 val runs = SlashCommands.parse(aheadChoices[at].value.trim())?.name in WHILE_WORKING
@@ -1003,6 +1003,8 @@ class Interactive(
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) {
                         if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else interruptTurn()
                     } else when (sequence(input)) {
+                        // Alt+Enter: into the turn now - what is typed, or with nothing typed, what is queued.
+                        "\r", "\n" -> sendNow()
                         "[A", "OA" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt - 1).coerceAtLeast(0); region.redraw() }
                         "[B", "OB" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt + 1).coerceAtMost(aheadChoices.lastIndex); region.redraw() }
                     }
@@ -1065,6 +1067,36 @@ class Interactive(
             say("")
         } finally {
             region.resume()
+        }
+    }
+
+    /**
+     * Alt+Enter while the agent works: the line typed - or, with nothing
+     * typed, every message queued - left for the running turn, which reads it
+     * at its next step as the person speaking, rather than after the turn ends.
+     * A chat whose answerer has no steps to read it between - My Claude Code, a
+     * bare model - is told so, and the message stays queued.
+     */
+    private fun sendNow() {
+        val typed = ahead.toString().trim()
+        val sending = if (typed.isNotEmpty()) listOf(typed) else queued.toList()
+        if (sending.isEmpty()) return
+        val into = active ?: conversation
+        val chat = into.chat ?: return
+        try {
+            sending.forEach { api.postDuringTurn(chat.id, it) }
+        } catch (refused: OrknuxException) {
+            if (typed.isNotEmpty()) queued += typed
+            ahead.setLength(0)
+            aheadTyped()
+            say(theme.warning("Not sent now: ") + theme.muted((refused.message ?: "this chat cannot be told anything mid-turn") + " It stays queued for when the turn ends."))
+            return
+        }
+        if (typed.isNotEmpty()) ahead.setLength(0) else queued.clear()
+        aheadTyped()
+        sending.forEach { text ->
+            userLines(text).forEach { say(it, owner = Transcript.MAIN) }
+            say(theme.muted("  sent now - the agent reads it at its next step"), owner = Transcript.MAIN)
         }
     }
 
@@ -1826,7 +1858,8 @@ class Interactive(
         say("")
         say(theme.bold("Keys"))
         listOf(
-            "Enter" to "send",
+            "Enter" to "send - while the agent works, queue it for when the turn ends",
+            "Alt+Enter while the agent works" to "send it now: the agent reads it at its next step",
             "Alt+Enter, Shift+Enter, or \\ at the end" to "a new line",
             "Tab" to "complete commands, agents, workspaces, skills and files",
             "Shift+Tab" to "switch mode: auto, ask, plan",

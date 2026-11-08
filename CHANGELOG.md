@@ -4,6 +4,17 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.27
+
+### Added
+
+- Alt+Enter while the agent works sends what you typed into the turn now,
+  rather than queuing it for when the turn ends: the agent reads it at its
+  next step, as you speaking, and can change course without being stopped.
+  With nothing typed, Alt+Enter sends everything queued now. Enter still
+  queues. A chat that cannot be told anything mid-turn - My Claude Code -
+  says so, and the message stays queued.
+
 ## 1.0.26
 
 ### Added
