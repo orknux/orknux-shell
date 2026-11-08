@@ -293,10 +293,9 @@ class TurnRenderer(
                 "Preparing a tool call" + (event.tool?.let { ": " + theme.accent(it) } ?: "") + theme.muted(" · ${event.chars} chars"),
             )
             is ChatEvent.Reading -> {
-                // Some servers count the cached tokens in what they report processed, some do not: where adding the two
-                // would be more than the whole, the processed count already holds them. Never past 100.
-                val done = if (event.processed + event.cached <= event.total) event.processed + event.cached else event.processed
-                val share = if (event.total > 0) " ${(done * 100 / event.total).coerceIn(0, 100)}%" else ""
+                // `processed` is how much of the prompt has been read, the cached part included (the server's
+                // PromptProgress says so): it is the share by itself, with nothing added to it.
+                val share = if (event.total > 0) " ${event.processed * 100 / event.total}%" else ""
                 out.phase("reading", "Reading the conversation$share" + theme.muted(" · ${tokens(event.total)} tokens, ${tokens(event.cached)} cached"))
             }
             is ChatEvent.Call -> {

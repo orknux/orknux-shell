@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.7
+
+### Fixed
+
+- "Reading the conversation" says how much of the prompt has been read: the
+  server's count already holds the cached part, and 1.0.6 still added it
+  while the reading was under way.
+
 ## 1.0.6
 
 ### Added

@@ -185,7 +185,7 @@ class RenderingTest {
     }
 
     @Test
-    fun `reading progress is a share of the whole, whether or not the server counts the cached in it`() {
+    fun `reading progress is what has been read of the whole, the cached part already in it`() {
         val phases = mutableListOf<String>()
         val renderer = TurnRenderer(plain, object : TurnOutput {
             override fun line(text: String) {}
@@ -194,6 +194,6 @@ class RenderingTest {
         renderer.handle(ChatEvent.Reading(43_000, 26_000, 39_000))
         renderer.handle(ChatEvent.Reading(43_000, 26_000, 8_500))
         assertTrue(phases[0].startsWith("Reading the conversation 90%"), phases[0])
-        assertTrue(phases[1].startsWith("Reading the conversation 80%"), phases[1])
+        assertTrue(phases[1].startsWith("Reading the conversation 19%"), "8.5k of 43k, not with the 26k cached added: ${phases[1]}")
     }
 }
