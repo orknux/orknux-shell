@@ -77,8 +77,15 @@ class LiveRegion(
         private set
     private val held = mutableListOf<String>()
 
+    /** Whose turn the region shows, said before the spinner where it is not the conversation being read; null for none. */
+    @Volatile var owner: String? = null
+
+    /** The thread whose lines go out at once while the region is set aside; the rest are held. */
+    @Volatile private var through: Thread? = null
+
     /** Its rows taken off the screen, the cursor where they began, and nothing drawn until [resume]. */
     fun pause() = synchronized(lock) {
+        through = Thread.currentThread()
         if (ansi && active) {
             sink(SYNC_START)
             erase()
@@ -93,6 +100,7 @@ class LiveRegion(
     /** Back on the conversation's screen: what came meanwhile is written, and the region drawn again. */
     fun resume() = synchronized(lock) {
         paused = false
+        through = null
         // Whatever ran meanwhile - a list - showed the cursor again on its way out; the region keeps it hidden.
         if (ansi && active) sink(HIDE_CURSOR)
         // The conversation's screen comes back as it was, the region's rows on it and the cursor where it was:
@@ -106,6 +114,13 @@ class LiveRegion(
     /** A permanent line into the transcript, above the region. */
     fun line(text: String) = synchronized(lock) {
         if (paused) {
+            // What the thread that set the region aside writes - a command's own answer - goes out at once; the turn's
+            // lines wait for the region to come back, so nothing lands in the middle of a list.
+            if (Thread.currentThread() === through) {
+                sink(text + "\r\n")
+                afterBlank = stripAnsi(text).isBlank()
+                return
+            }
             held += text
             return
         }
@@ -185,7 +200,7 @@ class LiveRegion(
         val w = (width() - 1).coerceAtLeast(10)
         // Room between the work written so far and what is happening now, as between the pieces of work.
         if (!afterBlank) out += ""
-        val spinner = theme.accent(frames[frame % frames.size]) + " "
+        val spinner = theme.accent(frames[frame % frames.size]) + " " + (owner?.let { theme.muted("$it: ") } ?: "")
         // The thinking shown live is under its own header, which carries the spinner: a second "Thinking" line
         // under it said the same thing twice.
         val thinkingNow = thinking != null && phaseKey == "thinking" && stopped == null

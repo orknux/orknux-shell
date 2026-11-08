@@ -4,6 +4,22 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.25
+
+### Fixed
+
+- The status bar's output count moves while the model writes - its answer,
+  its thinking and its tool calls - from the text as it streams, about four
+  characters a token, until the real count replaces the guess at the end of
+  the round. A long answer used to leave it standing still to the end.
+- Opened during a turn, /sessions and Ctrl+T have their heading and the line
+  above it again: they were held back until the list closed.
+- While another session is being read, the live block says whose turn it is -
+  "Browser helper (main): Running agent_wait" - since it is this chat's, not
+  the session on the screen.
+- A tool call in a session read here with no name recorded says "tool"
+  rather than nothing.
+
 ## 1.0.24
 
 ### Changed

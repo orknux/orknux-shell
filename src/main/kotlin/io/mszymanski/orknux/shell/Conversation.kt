@@ -13,6 +13,9 @@ data class Usage(val inputTokens: Long = 0, val outputTokens: Long = 0, val cach
  * A chat is opened lazily, on the first message after a start or a `/clear`,
  * so that switching agents or workspaces before saying anything opens nothing.
  */
+/** Characters to a token, for the guess the status bar shows while an answer streams. */
+private const val CHARS_PER_TOKEN = 4L
+
 class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, var mode: String) {
     @Volatile
     var chat: Chat? = null
@@ -27,7 +30,41 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
         val u = usage
         if (inputTokens <= u.inputTokens && outputTokens <= u.outputTokens) return false
         usage = u.copy(inputTokens = maxOf(u.inputTokens, inputTokens), outputTokens = maxOf(u.outputTokens, outputTokens))
+        // Counted for real now: what was guessed from the text up to here is in it.
+        streamedChars = 0
         return true
+    }
+
+    /**
+     * What the model has written since anything was last counted for real - its
+     * answer, its thinking and its tool calls as they stream - for the status
+     * bar to move while one long answer is written, which no count reaches until
+     * the round ends. A guess, about four characters a token; replaced by the
+     * real count as soon as there is one.
+     */
+    @Volatile
+    private var streamedChars = 0L
+    private var writingChars = 0L
+
+    val writingSoFar: Long get() = streamedChars / CHARS_PER_TOKEN
+
+    /** Every event of a turn, sent from here or followed, passes this way to keep [writingSoFar]. */
+    fun heard(event: ChatEvent) {
+        when (event) {
+            is ChatEvent.Chunk -> streamedChars += event.text.length
+            is ChatEvent.Thinking -> streamedChars += event.text.length
+            // A tool call's count is its arguments so far, across the round: only what is new since the last is added.
+            is ChatEvent.Writing -> {
+                if (event.chars > writingChars) streamedChars += event.chars - writingChars
+                writingChars = event.chars.toLong()
+            }
+            is ChatEvent.Called -> writingChars = 0
+            is ChatEvent.Done -> {
+                streamedChars = 0
+                writingChars = 0
+            }
+            else -> {}
+        }
     }
 
     /** The reasoning effort asked for before the chat existed; set on it once it does. */
@@ -108,6 +145,7 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
         try {
             api.client.stream("/api/chats/${open.id}/stream", request, opened = { body.set(it) }) { frame ->
                 val event = ChatEvent.of(frame)
+                heard(event)
                 when (event) {
                     // Counted at once, so the status line moves as the turn ends; the chat's own totals replace it after.
                     is ChatEvent.Done -> {

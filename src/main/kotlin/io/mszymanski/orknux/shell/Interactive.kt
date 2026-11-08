@@ -858,7 +858,7 @@ class Interactive(
         }
         val keys = Thread.ofPlatform().daemon().name("orknux-shell-keys").start { keysDuringTurn() }
         try {
-            api.client.stream("/api/chats/$chatId/follow?wait=true", null, opened = { into.following(it) }) { frame -> renderer.handle(ChatEvent.of(frame)) }
+            api.client.stream("/api/chats/$chatId/follow?wait=true", null, opened = { into.following(it) }) { frame -> ChatEvent.of(frame).let { into.heard(it); renderer.handle(it) } }
         } catch (failed: OrknuxException) {
             say(theme.danger("✗ " + (failed.message ?: "Lost the chat.")))
         } finally {
@@ -1471,7 +1471,7 @@ class Interactive(
             modeLabel(),
             c.effort?.let { theme.muted("effort ") + theme.text(it) },
             goal?.takeIf { it.running }?.let { theme.accent("goal ${it.progress}") },
-            theme.muted("↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)"),
+            theme.muted("↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens + c.writingSoFar)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)"),
             // The cost only where the model has a price; a local model's has none, and a dash read as a glitch.
             u.cost?.let { theme.muted(TurnRenderer.cost(it)) },
             c.speeds.said()?.let { theme.muted(it) },
@@ -1564,6 +1564,7 @@ class Interactive(
         // What was being read belongs to the chat it was read from; another chat starts on its own.
         if (readingRoot != own) {
             reading = null
+            region.owner = null
             readingRoot = own
         }
         val found = buildList {
@@ -1621,6 +1622,8 @@ class Interactive(
                 printSession(s.sessionId)
             }
         }
+        // While another session is read, the live block - this chat's turn - says it is this chat's, not the one read.
+        region.owner = if (reading != null) "${conversation.agent?.name ?: "main"} (main)" else null
         if (reading != null) {
             say("")
             say(theme.muted("You are reading ${s.agent}'s session. What you write still goes to this chat; /sessions or Ctrl+T to read another, or this chat again."))
@@ -2025,7 +2028,7 @@ class Interactive(
                 "USER" -> userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3)).forEach(::say)
                 "AGENT" -> markdown.render(line.content).removeSuffix("\n").split('\n').forEach(::say)
                 "TOOL" -> {
-                    say(theme.success("●") + " " + theme.bold(line.actor ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20)))
+                    say(theme.success("●") + " " + theme.bold(line.actor?.takeIf { it.isNotBlank() } ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20)))
                     line.result?.let { say("  " + theme.muted("⎿ " + TurnRenderer.resultSummary(it, width() - 6))) }
                 }
                 "THINKING" -> TurnRenderer.fold(ThinkingBlock(line.content, -1), "collapsed", theme, width()).forEach(::say)
@@ -2117,7 +2120,7 @@ class Interactive(
             try {
                 api.client.stream("/api/chats/$chatId/follow?wait=true", null) { frame ->
                     if (frame.event == "following") followed = true
-                    renderer.handle(ChatEvent.of(frame))
+                    ChatEvent.of(frame).let { conversation.heard(it); renderer.handle(it) }
                 }
             } catch (failed: OrknuxException) {
                 say(theme.danger("✗ " + (failed.message ?: "Lost the chat.")))
