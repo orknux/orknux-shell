@@ -317,7 +317,7 @@ class TurnRenderer(
                 // `processed` is how much of the prompt has been read, the cached part included (the server's
                 // PromptProgress says so): it is the share by itself, with nothing added to it.
                 val share = if (event.total > 0) " ${event.processed * 100 / event.total}%" else ""
-                out.phase("reading", "Reading the conversation$share" + theme.muted(" · ${tokens(event.total)} tokens, ${tokens(event.cached)} cached"))
+                out.phase("reading", "Reading the prompt$share" + theme.muted(" · ${tokens(event.total)} tokens, ${tokens(event.cached)} cached"))
             }
             is ChatEvent.Call -> {
                 calls[event.at] = event

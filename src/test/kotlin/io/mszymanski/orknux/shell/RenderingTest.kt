@@ -193,7 +193,7 @@ class RenderingTest {
         })
         renderer.handle(ChatEvent.Reading(43_000, 26_000, 39_000))
         renderer.handle(ChatEvent.Reading(43_000, 26_000, 8_500))
-        assertTrue(phases[0].startsWith("Reading the conversation 90%"), phases[0])
-        assertTrue(phases[1].startsWith("Reading the conversation 19%"), "8.5k of 43k, not with the 26k cached added: ${phases[1]}")
+        assertTrue(phases[0].startsWith("Reading the prompt 90%"), phases[0])
+        assertTrue(phases[1].startsWith("Reading the prompt 19%"), "8.5k of 43k, not with the 26k cached added: ${phases[1]}")
     }
 }

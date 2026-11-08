@@ -295,7 +295,8 @@ class Interactive(
     @Volatile private var slashDismissed: String? = null
 
     /** True while the list is drawn as one types, rather than on Tab. */
-    @Volatile private var listingAsTyped = false
+    /** The line the list is being worked out for: a / alone lists only the Shell's own commands. */
+    @Volatile private var listingTyped: String? = null
 
     /**
      * What the list under a / shows now: while the line is one word starting
@@ -305,12 +306,18 @@ class Interactive(
      */
     private fun slashChoices(r: LineReader): List<Completion> {
         val typed = r.buffer.toString()
-        if (r.buffer.cursor() != typed.length || !Regex("""/[^\s/]*""").matches(typed) || typed == slashDismissed) return emptyList()
-        listingAsTyped = true
+        if (r.buffer.cursor() != typed.length || typed == slashDismissed) return emptyList()
+        return slashChoices(typed)
+    }
+
+    /** The same, for any line: the prompt's, or the one typed ahead while a turn runs. */
+    private fun slashChoices(typed: String): List<Completion> {
+        if (!Regex("""/[^\s/]*""").matches(typed)) return emptyList()
+        listingTyped = typed
         return try {
             completions.complete(typed)
         } finally {
-            listingAsTyped = false
+            listingTyped = null
         }
     }
 
@@ -320,20 +327,25 @@ class Interactive(
         val shown = slashChoices(reader)
         if (shown.isEmpty()) return emptyList()
         slashAt = slashAt.coerceIn(0, shown.lastIndex)
+        return slashRows(shown, slashAt, "Enter runs")
+    }
+
+    /** [shown] as the list draws it, a window of [SLASH_ROWS] around [slashAt]; [enter] says what Enter does. */
+    private fun slashRows(shown: List<Completion>, slashAt: Int, enter: String): List<String> {
         val top = (slashAt - SLASH_ROWS / 2).coerceIn(0, (shown.size - SLASH_ROWS).coerceAtLeast(0))
         val wide = shown.subList(top, minOf(shown.size, top + SLASH_ROWS)).maxOf { it.value.trimEnd().length } + 2
         return shown.subList(top, minOf(shown.size, top + SLASH_ROWS)).mapIndexed { i, c ->
             val at = top + i == slashAt
             val name = c.value.trimEnd().padEnd(wide)
             (if (at) theme.accent("› ") + theme.bold(theme.accent(name)) else "  " + theme.text(name)) + theme.muted(c.description ?: "")
-        } + listOfNotNull(if (shown.size > SLASH_ROWS) theme.muted("  ${slashAt + 1} of ${shown.size} · ↑↓ · Tab completes · Enter runs · Esc closes") else theme.muted("  ↑↓ · Tab completes · Enter runs · Esc closes"))
+        } + listOfNotNull(if (shown.size > SLASH_ROWS) theme.muted("  ${slashAt + 1} of ${shown.size} · ↑↓ · Tab completes · $enter · Esc closes") else theme.muted("  ↑↓ · Tab completes · $enter · Esc closes"))
     }
 
     private val completions: Completions by lazy {
         Completions(object : CompletionSources {
             override fun agents() = agents.map { it.name }
             override fun workspaces() = workspacesCached().map { it.name }
-            override fun skills() = if (listingAsTyped && reader.buffer.toString() == "/") emptyList() else skillsCached().map { it.key }
+            override fun skills() = if (listingTyped == "/") emptyList() else skillsCached().map { it.key }
             override fun marker() = conversation.workspace.commandMarker
             override fun models() = modelsCached().map { it.name }
             override fun chats() = runCatching { api.chats(conversation.workspace.id).map { it.title } }.getOrDefault(emptyList())
@@ -828,6 +840,7 @@ class Interactive(
             queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
             if (queued.isNotEmpty() && region.active) add("")
             if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
+            if (region.active && aheadChoices.isNotEmpty()) addAll(slashRows(aheadChoices, aheadAt.coerceIn(0, aheadChoices.lastIndex), "Enter queues"))
         }
         // A blank line between what is happening and what is being written.
         if (status != null) return listOf("") + typing
@@ -862,22 +875,36 @@ class Interactive(
                 when (c) {
                     3 -> interruptTurn()
                     15 -> toggleDetails()
-                    27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
-                    // Typed while the agent works: kept under the spinner, and Enter queues it for when the turn ends.
+                    // Esc closes the list of commands when it is open, and interrupts the turn when it is not.
+                    27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) {
+                        if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else interruptTurn()
+                    } else when (sequence(input)) {
+                        "[A", "OA" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt - 1).coerceAtLeast(0); region.redraw() }
+                        "[B", "OB" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt + 1).coerceAtMost(aheadChoices.lastIndex); region.redraw() }
+                    }
+                    // Tab takes the command highlighted, to go on typing after it.
+                    9 -> aheadChoices.getOrNull(aheadAt)?.let { chosen ->
+                        ahead.setLength(0)
+                        ahead.append(chosen.value.trimEnd()).append(' ')
+                        aheadTyped()
+                    }
+                    // Typed while the agent works: kept under the spinner, and Enter queues it for when the turn ends -
+                    // the command highlighted, where the list is open.
                     13, 10 -> {
+                        aheadChoices.getOrNull(aheadAt)?.let { chosen -> ahead.setLength(0); ahead.append(chosen.value.trimEnd()) }
                         val typed = ahead.toString().trim()
                         if (typed.isNotEmpty()) queued += typed
                         ahead.setLength(0)
-                        region.redraw()
+                        aheadTyped()
                     }
                     127, 8 -> {
                         if (ahead.isNotEmpty()) ahead.setLength(ahead.length - 1)
-                        region.redraw()
+                        aheadTyped()
                     }
-                    21 -> { ahead.setLength(0); region.redraw() }
+                    21 -> { ahead.setLength(0); aheadTyped() }
                     else -> if (c >= 32) {
                         ahead.append(c.toChar())
-                        region.redraw()
+                        aheadTyped()
                     }
                 }
             }
@@ -891,6 +918,31 @@ class Interactive(
     private fun drainSequence(input: NonBlockingReader) {
         while (input.peek(5) >= 0) input.read(5)
     }
+
+    /** The rest of an escape sequence - "[A" for Up - read whole, so nothing of it is taken as typing. */
+    private fun sequence(input: NonBlockingReader): String {
+        val sb = StringBuilder()
+        while (input.peek(5) >= 0) sb.append(input.read(5).toChar())
+        return sb.toString()
+    }
+
+    /**
+     * The commands matching what is typed ahead, worked out when it changes
+     * rather than at every frame - a frame is a tenth of a second - and the
+     * line and the list drawn again.
+     */
+    private fun aheadTyped() {
+        val typed = ahead.toString()
+        if (typed != aheadDismissed) aheadDismissed = null
+        val before = aheadChoices
+        aheadChoices = if (aheadDismissed != null) emptyList() else runCatching { slashChoices(typed) }.getOrDefault(emptyList())
+        if (aheadChoices.map { it.value } != before.map { it.value }) aheadAt = 0
+        region.redraw()
+    }
+
+    @Volatile private var aheadChoices: List<Completion> = emptyList()
+    @Volatile private var aheadAt = 0
+    private var aheadDismissed: String? = null
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
     /** What Ctrl+O does now, said on the spinner's line. */

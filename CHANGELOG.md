@@ -4,6 +4,21 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.15
+
+### Added
+
+- The list of commands opens under a / typed while the agent works, as it
+  does at the prompt: Up and Down move through it, Tab takes the command to
+  go on typing after it, Enter queues it for when the turn ends, and Esc
+  closes the list - Esc with no list open still interrupts the turn.
+
+### Changed
+
+- "Reading the conversation" is now "Reading the prompt": what the model
+  reads before it answers is the prompt - the part of it not already cached -
+  not the conversation anew.
+
 ## 1.0.14
 
 ### Fixed
