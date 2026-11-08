@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.34
+
+### Fixed
+
+- A blank line above a message sent into the turn, as below it.
+- A followed session's thoughts say how long they took - "Thought for 75s" -
+  as this chat's do, rather than a bare "Thought" that read as silence while
+  the model worked on a big page.
+
 ## 1.0.33
 
 ### Changed

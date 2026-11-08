@@ -1158,6 +1158,8 @@ class Interactive(
             }
             ahead.setLength(0)
             aheadTyped()
+            // Room either side, as around anything said: the turn's own lines leave none before what comes next.
+            say("")
             userLines(typed).forEach { say(it) }
             say(theme.muted("  sent now - ${followed.agent} reads it at its next step"))
             say("")
@@ -1180,6 +1182,7 @@ class Interactive(
         aheadTyped()
         sending.forEach { text ->
             into.sentNow()
+            say("", owner = Transcript.MAIN)
             userLines(text).forEach { say(it, owner = Transcript.MAIN) }
             say(theme.muted("  sent now - the agent reads it at its next step"), owner = Transcript.MAIN)
         }
@@ -2316,7 +2319,9 @@ class Interactive(
                         .dropLastWhile { it.isEmpty() }.map { it to View.FULL }
             }
             "THINKING" -> {
-                val block = ThinkingBlock(line.content, -1)
+                // Its own duration, so a long think in a followed session says "Thought for 75s" as this chat's does,
+                // not a bare "Thought" that reads as silence.
+                val block = ThinkingBlock(line.content, line.millis ?: -1)
                 listOf("" to View.BOTH) + TurnRenderer.fold(block, "collapsed", theme, w).map { it to View.FOLDED } +
                     TurnRenderer.fold(block, "expanded", theme, w).map { it to View.FULL }
             }

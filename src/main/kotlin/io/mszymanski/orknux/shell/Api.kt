@@ -55,7 +55,7 @@ data class PersonQuestion(
 data class Subagent(val sessionId: String, val agent: String, val about: String, val active: Boolean, val depth: Int, val inputTokens: Long, val outputTokens: Long, val cost: String?, val working: Boolean = false)
 
 /** One line of a session's transcript. */
-data class SessionLine(val kind: String, val actor: String?, val content: String, val result: String?)
+data class SessionLine(val kind: String, val actor: String?, val content: String, val result: String?, val millis: Long? = null)
 
 data class Skill(val key: String, val name: String, val description: String?, val catalog: String, val plugin: String?)
 
@@ -314,9 +314,9 @@ class Api(val client: OrknuxClient) {
     fun sessionLines(sessionId: String, size: Int = 200): List<SessionLine> =
         client.graphql(
             "query Events(\$sessionId: ID!, \$size: Int, \$ascending: Boolean) { llmSessionEvents(sessionId: \$sessionId, page: 0, size: \$size, ascending: \$ascending) " +
-                "{ content { kind actor content result } } }",
+                "{ content { kind actor content result millis } } }",
             Json.obj().put("sessionId", sessionId).put("size", size).put("ascending", true),
-        ).get("llmSessionEvents").list("content").map { SessionLine(it.str("kind") ?: "", it.str("actor"), it.str("content") ?: "", it.str("result")) }
+        ).get("llmSessionEvents").list("content").map { SessionLine(it.str("kind") ?: "", it.str("actor"), it.str("content") ?: "", it.str("result"), it.double("millis")?.toLong()) }
 
     /** The skills a chat with [agent] can name, once each by key - `reachableSkills` in the interface. */
     fun skills(workspaceId: String, agent: Agent?): List<Skill> {
