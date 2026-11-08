@@ -64,12 +64,24 @@ New-Item -ItemType Directory -Path $Work | Out-Null
 try {
     Write-Host "Downloading Orknux Shell ($Version) ..."
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    try {
-        Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile (Join-Path $Work $Asset)
-        Invoke-WebRequest -UseBasicParsing -Uri "$Base/SHA256SUMS" -OutFile (Join-Path $Work 'SHA256SUMS')
-    } catch {
-        Fail "could not download from ${Base}: $($_.Exception.Message). Is there a published release? See https://github.com/$Repo/releases"
+    # The same file through GitHub's API when the download address fails: on
+    # 2026-11-08 it answered 504 for a while and the API handed out the same bytes.
+    function Fetch($Name) {
+        $out = Join-Path $Work $Name
+        try { Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Name" -OutFile $out; return } catch { }
+        Write-Host "  ${Name}: GitHub's download address did not answer; trying its API ..."
+        try {
+            $which = if ($Version -eq 'latest') { 'latest' } else { "tags/$Version" }
+            $release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/$which"
+            $found = $release.assets | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+            if (-not $found) { throw "the release has no $Name" }
+            Invoke-WebRequest -UseBasicParsing -Uri $found.url -Headers @{ Accept = 'application/octet-stream' } -OutFile $out
+        } catch {
+            Fail "could not download ${Name}: $($_.Exception.Message). Is there a published release? See https://github.com/$Repo/releases"
+        }
     }
+    Fetch $Asset
+    Fetch 'SHA256SUMS'
 
     $wanted = Get-Content (Join-Path $Work 'SHA256SUMS') |
         ForEach-Object { $parts = $_ -split '\s+', 2; if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $Asset) { $parts[0] } } |
