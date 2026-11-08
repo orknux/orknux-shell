@@ -12,7 +12,7 @@ object SlashCommands {
         SlashCommand("attach", "[paths]", "Attach files to the next message, or list what is attached"),
         SlashCommand("detach", "<n|all>", "Take an attachment off"),
         SlashCommand("open", "<n>", "Open a link of the last answer in the browser"),
-        SlashCommand("thinking", "[collapsed|expanded|hidden]", "Read the last turn's thinking (also Ctrl+O), or set how it is shown"),
+        SlashCommand("thinking", "[collapsed|expanded|hidden]", "The last turn in full - thinking and tool calls (also Ctrl+O) - or set how thinking is shown"),
         SlashCommand("effort", "[level|default]", "The model's reasoning effort for this chat"),
         SlashCommand("subagents", "[n]", "The agents this conversation asked, or read one"),
         SlashCommand("review", "[--fix] [branch|path]", "Review the uncommitted changes, a branch, or a path"),

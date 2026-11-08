@@ -80,7 +80,7 @@ class Interactive(
         if (drawable) takeScreen()
         status = runCatching { Status.getStatus(terminal) }.getOrNull()
         // Its rows taken now, on the empty screen: taken later, the first draw scrolled the banner away.
-        runCatching { status?.update(listOf(AttributedString(""), AttributedString(""))) }
+        runCatching { status?.update(List(barRows()) { AttributedString("") }) }
         reader = buildReader()
         region = LiveRegion(
             sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
@@ -145,7 +145,7 @@ class Interactive(
      */
     private fun toFoot() {
         val rows = terminal.height.takeIf { it > 0 } ?: return
-        terminal.writer().print("\u001b[${(rows - STATUS_ROWS).coerceAtLeast(1)};1H")
+        terminal.writer().print("\u001b[${(rows - barRows()).coerceAtLeast(1)};1H")
         terminal.writer().flush()
     }
 
@@ -165,7 +165,7 @@ class Interactive(
             theme.muted("Workspace ") + theme.text(workspace.name) + theme.muted(" · agent ") +
                 theme.text(agent?.name ?: "the one you last talked to") + theme.muted(" · mode ") + modeLabel(),
         )
-        say(theme.muted("/help for commands · @agent to ask another agent · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
+        say(theme.muted("/help for commands · @agent to ask another agent · Ctrl+O the last turn in full · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
         say("")
     }
 
@@ -415,6 +415,9 @@ class Interactive(
                 pushedUp = 0
             }
             val text = line.replace("\\\n", "\n").trim()
+            // The line the person entered is on the screen now, written by the line editor rather than through say():
+            // what follows is after text, so the blank line it asks for is kept.
+            if (text.isNotEmpty()) lastBlank = false
             if (text.isEmpty()) {
                 // An empty Enter leaves no bare prompt behind: its row is cleared and the screen comes back down.
                 if (region.ansi) {
@@ -501,7 +504,7 @@ class Interactive(
     private fun prompt(): String = theme.accent("› ")
 
     private fun ask(prompt: String): String = try {
-        reader.readLine(prompt).trim()
+        reader.readLine(prompt).trim().also { lastBlank = false }
     } catch (_: UserInterruptException) {
         ""
     }
@@ -518,7 +521,8 @@ class Interactive(
                 liveThinking = text
                 // Kept for Ctrl+O, but drawn live only when asked for: by default the spinner says "Thinking"
                 // and the text is read afterwards, from the "Thought for" line, as in Claude Code.
-                region.thinking(if (config.thinking == "expanded") text else null)
+                region.thinkingHint = if (text == null || config.thinking == "expanded") null else if (thinkingShown) "Ctrl+O hides it" else "Ctrl+O shows it"
+                region.thinking(if (config.thinking == "expanded" || thinkingShown) text else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
@@ -534,6 +538,7 @@ class Interactive(
         val raw = terminal.attributes
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
         terminal.attributes = raw
+        thinkingShown = false
         region.phase("thinking", theme.thinking("Thinking"))
         region.start { below() }
         // Ten frames a second, and only while a turn runs: nothing ticks when nothing is happening.
@@ -566,7 +571,6 @@ class Interactive(
             terminal.attributes = saved
         }
         lastThinking = renderer.blocks.toList()
-        renderer.linkList().forEach(::say)
         if (chatBefore == null && api.startedWithoutOrigin) {
             say(theme.warning("This server does not know chats opened in Orknux Shell yet, so its agent cannot run commands here."))
         }
@@ -625,7 +629,7 @@ class Interactive(
         val ownRow = question.options.size
         val text = if (own && ownRow in picked) {
             val typed = try {
-                reader.readLine(theme.accent("› ") + theme.muted("your answer: ")).trim()
+                reader.readLine(theme.accent("› ") + theme.muted("your answer: ")).trim().also { lastBlank = false }
             } catch (_: UserInterruptException) {
                 return false
             } catch (_: org.jline.reader.EndOfFileException) {
@@ -717,7 +721,6 @@ class Interactive(
         }
         lastTurn = renderer
         lastThinking = renderer.blocks.toList()
-        renderer.linkList().forEach(::say)
         runCatching { into.refresh() }
         say("")
         footer()
@@ -754,7 +757,13 @@ class Interactive(
                 if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
                 when (c) {
                     3 -> interruptTurn()
-                    15 -> showThinking()
+                    15 -> {
+                        // Shown under the spinner while it is wanted, and gone again on the next Ctrl+O: nothing is
+                        // written into the transcript, so there is nothing to take back.
+                        thinkingShown = !thinkingShown
+                        if (liveThinking != null && config.thinking != "expanded") region.thinkingHint = if (thinkingShown) "Ctrl+O hides it" else "Ctrl+O shows it"
+                        region.thinking(if (thinkingShown || config.thinking == "expanded") liveThinking else null)
+                    }
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
                 }
             }
@@ -770,15 +779,34 @@ class Interactive(
     }
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
+    /** Whether the thinking is shown live in this turn: Ctrl+O while it runs turns it on and off. */
+    @Volatile private var thinkingShown = false
+
+    /**
+     * The last turn's thinking, read in a page of its own on the terminal's
+     * alternate screen - the arrows, PgUp and PgDn scroll it - and gone again on
+     * Ctrl+O, Esc or q, the conversation exactly as it was. Nothing is written
+     * into the transcript, so there is nothing to take back.
+     */
     private fun showThinking() {
-        val blocks = (lastTurn?.blocks?.toList() ?: lastThinking).ifEmpty { lastThinking }
-        val live = liveThinking
-        if (blocks.isEmpty() && live == null) {
-            say(theme.muted("No thinking in the last turn."))
+        val details = lastTurn?.details?.toList().orEmpty().ifEmpty { lastThinking.map { Detail.Thought(it) } }
+        if (details.isEmpty()) {
+            say(theme.muted("Nothing to show of the last turn: no thinking and no tool calls."))
             return
         }
-        blocks.forEach { block -> TurnRenderer.fold(block, "expanded", theme, width()).forEach(::say) }
-        live?.let { TurnRenderer.fold(ThinkingBlock(it, System.currentTimeMillis() - thinkingSince), "expanded", theme, width()).forEach(::say) }
+        val text = TurnRenderer.detailLines(details, theme, width())
+        if (!region.ansi) {
+            text.forEach(::say)
+            return
+        }
+        val saved = terminal.enterRawMode()
+        try {
+            ThinkingPage(text, theme, { terminal.height.takeIf { it > 0 } ?: 24 }, ::width,
+                sink = { terminal.writer().print(it); terminal.writer().flush() },
+                key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) }).show()
+        } finally {
+            terminal.attributes = saved
+        }
     }
 
     // ---- approvals ---------------------------------------------------------------------------
@@ -954,6 +982,11 @@ class Interactive(
      * the line editor's own styling would strip.
      */
     private fun say(text: String) {
+        // A line is one row: text with newlines in it is its lines, each said, or the rows under it go uncounted.
+        if ('\n' in text) {
+            text.removeSuffix("\n").split('\n').forEach { say(it.removeSuffix("\r")) }
+            return
+        }
         // One blank line between things, never two: the renderer spaces its own pieces, and a notice said in the
         // middle of a turn (an interruption, an approval) spaces itself as well.
         val blank = stripAnsi(text).isBlank()
@@ -975,6 +1008,15 @@ class Interactive(
 
     @Volatile private var lastBlank = true
 
+    /**
+     * The bar's height, from the window's width alone: one row where a wide
+     * window has room for everything, the workspace on a row of its own above
+     * a narrower one's. Never from what the bar says, which grows as a chat
+     * goes on - JLine's status cannot change height under text without losing
+     * where the cursor is, so it changes only when the window does.
+     */
+    private fun barRows(): Int = if (width() >= WIDE_BAR) 2 else 4
+
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
     /** The status line under the editor, with the files waiting to go; while a turn runs, the region draws it instead. */
@@ -986,8 +1028,16 @@ class Interactive(
         val st = status ?: return
         // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
         val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
-        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText()).map { " $it" }
-        val draw = { runCatching { st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) }) } }
+        val (left, right) = statusParts()
+        // On one row while it fits, the workspace at its right end; where it does not, the workspace on a row of its
+        // own above, with a rule between, rather than cut off.
+        val bar = if (barRows() == 2) listOf(rule, " " + oneRow(left, right)) else listOf(rule, " $right", rule, " $left")
+        val lines = bar.take(1) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + bar.drop(1)
+        val draw = {
+            runCatching {
+                st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
+            }
+        }
         synchronized(out) { if (::region.isInitialized) region.exclusive(draw) else draw() }
     }
 
@@ -995,12 +1045,20 @@ class Interactive(
         theme.accent("📎 ") + theme.text(a.filename) + theme.muted(" ${size(a.sizeBytes)} ") + theme.muted("×${i + 1}")
     }.joinToString("  ")
 
-    private fun statusText(): String {
+    private fun statusText(): String = statusParts().let { (left, right) -> oneRow(left, right) }
+
+    private fun oneRow(left: String, right: String): String {
+        val gap = width() - 3 - visibleLength(left) - visibleLength(right)
+        return if (gap >= 2) left + " ".repeat(gap) + right else left + theme.muted(" · ") + right
+    }
+
+    /** What the bar says: what is going on, and - the right-hand part - the workspace one is in. */
+    private fun statusParts(): Pair<String, String> {
         val c = conversation
         val u = c.usage
-        val device = if (::device.isInitialized && device.connected) theme.success("●") + theme.muted(" local") else theme.muted("○ local")
-        return listOfNotNull(
-            theme.text(c.workspace.name),
+        // Whether the agent can run commands on this computer: the door Orknux Shell keeps open to the server for it.
+        val device = if (::device.isInitialized && device.connected) theme.success("●") + theme.muted(" runs commands here") else theme.muted("○ no commands here")
+        val left = listOfNotNull(
             theme.text(c.agent?.name ?: c.chat?.agentName ?: "agent"),
             modeLabel(),
             c.effort?.let { theme.muted("effort ") + theme.text(it) },
@@ -1008,8 +1066,11 @@ class Interactive(
             theme.muted("↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)"),
             // The cost only where the model has a price; a local model's has none, and a dash read as a glitch.
             u.cost?.let { theme.muted(TurnRenderer.cost(it)) },
+            c.speeds.said()?.let { theme.muted(it) },
             device,
         ).joinToString(theme.muted(" · "))
+        // The workspace at the far right, as where one is rather than what is going on.
+        return left to theme.muted("workspace ") + theme.text(c.workspace.name)
     }
 
     private fun modeLabel(): String = when (conversation.mode) {
@@ -1087,10 +1148,13 @@ class Interactive(
             say(theme.muted("Orknux Shell ${Version.VERSION} is the newest there is."))
             return
         }
-        say(theme.bold("Orknux Shell ${offer.version}") + theme.muted(offer.publishedAt?.let { " · published ${it.substringBefore('T')}" } ?: ""))
-        offer.changelog?.lines()?.filter { it.isNotBlank() }?.take(12)?.forEach { say(theme.muted("  $it")) }
+        say(theme.bold(theme.accent("Orknux Shell ${offer.version}")) + theme.muted(offer.publishedAt?.let { " · published ${it.substringBefore('T')}" } ?: ""))
+        say("")
+        releaseNotes(theme, offer.changelog, width()).forEach(::say)
+        say("")
         say(theme.muted("Downloading ${size(offer.file.size)}…"))
         val path = updater.install(offer)
+        say("")
         say(theme.success("✓ ") + "Orknux Shell ${offer.version} is installed" + theme.muted(" at $path; its signature checked against Orknux's release key."))
         say(theme.muted("This session goes on as ${Version.VERSION}. /quit and start orknux again to use it."))
     }
@@ -1288,9 +1352,13 @@ class Interactive(
     private fun open(argument: String?) {
         val found = lastTurn?.links ?: emptyList()
         if (found.isEmpty()) throw OrknuxException("The last answer had no links.")
-        val n = argument?.toIntOrNull() ?: if (found.size == 1) 1 else throw OrknuxException("Which one? /open 1 to ${found.size}")
+        val n = argument?.toIntOrNull() ?: if (found.size == 1) 1 else {
+            found.forEachIndexed { i, (label, url) -> say("  " + theme.accent("${i + 1}.") + " " + (if (label != url) "$label " else "") + theme.muted(url)) }
+            say(theme.muted("/open <n> opens one."))
+            return
+        }
         val (_, url) = found.getOrNull(n - 1) ?: throw OrknuxException("There is no link $n; the last answer had ${found.size}.")
-        runCatching { Links.open(url) }.onFailure { throw OrknuxException("Could not open a browser: ${it.message}. The address: $url") }
+        runCatching { Links.open(url) }.onFailure { throw OrknuxException("Could not open it: ${it.message}. The address: $url") }
         say(theme.muted("Opened ") + links.link(url, url))
     }
 
@@ -1608,7 +1676,7 @@ class Interactive(
             val name = names[chosen]
             at = chosen
             val typed = try {
-                reader.readLine(theme.paint(name, "████") + " " + name + theme.muted(" (#rrggbb, empty for Orknux's own, Esc to keep) › "), null, null as org.jline.reader.MaskingCallback?, theme.hex(name)).trim()
+                reader.readLine(theme.paint(name, "████") + " " + name + theme.muted(" (#rrggbb, empty for Orknux's own, Esc to keep) › "), null, null as org.jline.reader.MaskingCallback?, theme.hex(name)).trim().also { lastBlank = false }
             } catch (_: UserInterruptException) {
                 continue
             } catch (_: org.jline.reader.EndOfFileException) {
@@ -1643,8 +1711,26 @@ class Interactive(
     }
 
     companion object {
-        /** The rows the status bar takes at the foot: the rule above it, and the bar. */
-        const val STATUS_ROWS = 2
+        /** How much of a release's notes /update shows before it says where the rest is. */
+        const val RELEASE_NOTE_LINES = 40
+
+        /**
+         * A release's notes as the Markdown they are - headings, bullets, a blank
+         * line between sections - and, where they run long, cut at a section's end
+         * with word of the rest rather than in the middle of one.
+         */
+        fun releaseNotes(theme: Theme, markdown: String?, width: Int, most: Int = RELEASE_NOTE_LINES): List<String> {
+            if (markdown.isNullOrBlank()) return emptyList()
+            val lines = Markdown(theme, { width }).render(markdown.trim()).removeSuffix("\n").split('\n')
+                .fold(mutableListOf<String>()) { kept, line -> if (!(line.isBlank() && kept.lastOrNull()?.isBlank() != false)) kept += line; kept }
+            if (lines.size <= most) return lines.map { "  $it" }
+            val cut = lines.subList(0, most).indexOfLast { it.isBlank() }.takeIf { it > 0 } ?: most
+            return lines.subList(0, cut).map { "  $it" } + listOf("", theme.muted("  …and more: https://github.com/orknux/orknux-shell/blob/main/CHANGELOG.md"))
+        }
+
+
+        /** How wide a window has to be for the status bar on one row, with the workspace at its right. */
+        const val WIDE_BAR = 160
 
         /** How much of the thinking the live block shows: its last lines, as the web chat's does. */
         const val THINKING_LINES = 5

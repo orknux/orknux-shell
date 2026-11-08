@@ -59,7 +59,9 @@ class FeaturesTest {
         }, links = Links(false, "http://h"))
         renderer.handle(ChatEvent.Chunk("Read [this](/a) and [that](https://b.example)."))
         renderer.handle(ChatEvent.Answered)
-        assertEquals(listOf("Links (/open <n>):", "  1. this http://h/a", "  2. that https://b.example"), renderer.linkList())
+        // Kept in order for /open, and not listed again under the answer, where they already are.
+        assertEquals(listOf("this" to "http://h/a", "that" to "https://b.example"), renderer.links)
+        assertTrue(lines.none { "Links" in it }, lines.toString())
     }
 
     // ---- pasted paths ------------------------------------------------------------------------
@@ -168,7 +170,7 @@ class FeaturesTest {
         assertEquals(ThinkingBlock("First I look.", 2000), renderer.blocks[0])
         assertEquals("Now I know.", renderer.blocks[1].text)
         // Each piece of work on its own, with a blank line between, and one more before the answer.
-        assertEquals(listOf("▸ Thought for 2.0s  (Ctrl+O to read)", ""), out.lines.subList(0, 2))
+        assertEquals(listOf("▸ Thought for 2.0s", ""), out.lines.subList(0, 2))
         assertTrue(Regex("""✓ terminal_run ls · \d+\.\ds · exit 0 · a""").matches(out.lines[2]), out.lines[2])
         assertEquals("", out.lines[3])
         assertTrue(out.lines[4].startsWith("▸ Thought for"), out.lines[4])

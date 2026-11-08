@@ -4,6 +4,38 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Added
+
+- Ctrl+O at the prompt shows the last turn in full - every thought, and every
+  tool call with all it was given and all it answered, a command's output as
+  it printed - on a page of its own; Ctrl+O, Esc or q closes it, the
+  conversation as it was. During a turn Ctrl+O shows the thinking live and
+  hides it again.
+- The status bar shows how fast the model writes (decode) and reads the
+  prompt (eval), where its server reports them.
+
+### Changed
+
+- The workspace is at the right of the status bar; in a window under 160
+  columns it has a row of its own above, with a rule between.
+- "local" in the status bar says what it meant: "runs commands here" or "no
+  commands here".
+- The list of an answer's links under it is gone; `/open` with no number
+  lists them.
+- `/update` shows the release notes as they are written, headings and room
+  between sections, and says where the rest is if they are long.
+
+### Fixed
+
+- A thought no longer says "(Ctrl+O to read)", which worked only for the
+  last turn.
+- What the model said while it worked came with newlines that left blank
+  rows the screen had not counted: three blank lines before a tool call.
+- After a line you typed, the blank line before the answer was dropped.
+- Under WSL, `/open` opens a file in Windows.
+
 ## 1.0.4
 
 ### Added

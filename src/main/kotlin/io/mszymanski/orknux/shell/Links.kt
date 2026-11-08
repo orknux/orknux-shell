@@ -44,9 +44,14 @@ class Links(val osc8: Boolean, private val server: String?) {
             }
         }
 
-        /** Opens an address in the system's browser. */
-        fun open(url: String, os: String = System.getProperty("os.name")) {
+        /**
+         * Opens an address - a page in the browser, a file in the program that
+         * opens it. Under WSL that is Windows' to do, since the person's desktop
+         * is Windows': explorer.exe, handed a file as the Windows path it is.
+         */
+        fun open(url: String, os: String = System.getProperty("os.name"), env: Map<String, String> = System.getenv()) {
             val command = when {
+                env.containsKey("WSL_DISTRO_NAME") -> listOf("explorer.exe", windowsTarget(url))
                 Platform.isWindows(os) -> listOf("rundll32", "url.dll,FileProtocolHandler", url)
                 os.lowercase().contains("mac") -> listOf("open", url)
                 else -> listOf("xdg-open", url)
@@ -83,6 +88,18 @@ class Links(val osc8: Boolean, private val server: String?) {
                 return uri("/$distro$posix", "wsl.localhost")
             }
             return uri(posix)
+        }
+
+        /** What explorer.exe takes for an address: a file: one as its Windows path, anything else as it is. */
+        fun windowsTarget(url: String): String {
+            if (!url.startsWith("file:")) return url
+            val uri = runCatching { URI(url) }.getOrNull() ?: return url
+            val path = uri.path ?: return url
+            return when {
+                !uri.host.isNullOrEmpty() -> "\\\\" + uri.host + path.replace('/', '\\')
+                Regex("^/[A-Za-z]:").containsMatchIn(path) -> path.removePrefix("/").replace('/', '\\')
+                else -> url
+            }
         }
 
         /** A `file://` address for a path, for a finding's file:line to open in an editor that takes one. */

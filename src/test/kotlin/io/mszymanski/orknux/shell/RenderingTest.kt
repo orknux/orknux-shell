@@ -64,7 +64,7 @@ class RenderingTest {
         renderer.handle(ChatEvent.Chunk("The disk is **fine**."))
         renderer.handle(ChatEvent.Answered)
         assertTrue(lines[0].startsWith("▸ Thought for"), lines[0])
-        assertTrue(lines[0].endsWith("(Ctrl+O to read)"), lines[0])
+        assertTrue(Regex("""▸ Thought for \d+\.\ds""").matches(lines[0]), "no Ctrl+O hint on a thought already folded: ${lines[0]}")
         assertEquals("", lines[1], "a blank line between one piece of work and the next")
         assertTrue(Regex("""✓ terminal_run df -h · \d+\.\ds · exit 0 · Filesystem 1G""").matches(lines[2]), lines[2])
         assertEquals("", lines[3], "a blank line between the work and the answer")
@@ -157,5 +157,30 @@ class RenderingTest {
         assertTrue(drawn.contains("\u001b]8;;file:///C:/Users/micha/a.csv\u001b\\"), drawn)
         assertEquals(1, Regex("\u001b]8;;file").findAll(drawn).count(), drawn)
         assertEquals("file:///C:/Users/micha/a.csv", md.found.single().second, "and /open can open it")
+    }
+
+    @Test
+    fun `what the model says while it works is its own lines, without the newlines it arrives with`() {
+        val lines = mutableListOf<String>()
+        val renderer = TurnRenderer(plain, object : TurnOutput {
+            override fun line(text: String) { lines += text }
+            override fun phase(key: String, text: String) {}
+        })
+        renderer.handle(ChatEvent.Said("Running `pwd` now.\n\n"))
+        assertEquals(listOf("Running pwd now."), lines)
+        assertTrue(lines.none { '\n' in it })
+    }
+
+    @Test
+    fun `eval is measured from the reading reports, decode is the server's, and a new request starts eval again`() {
+        var now = 0L
+        val speeds = Speeds { now }
+        assertNull(speeds.said())
+        speeds.read(0); now = 1000; speeds.read(1200)
+        assertEquals("eval 1.2k t/s", speeds.said())
+        speeds.decoded(48.25)
+        assertEquals("eval 1.2k t/s · decode 48.3 t/s", speeds.said())
+        now = 5000; speeds.read(100); now = 5500; speeds.read(600)
+        assertEquals("eval 1.0k t/s · decode 48.3 t/s", speeds.said(), "the next request's own rate")
     }
 }

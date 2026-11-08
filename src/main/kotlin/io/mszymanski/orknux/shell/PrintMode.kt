@@ -70,7 +70,6 @@ class PrintMode(
                 renderer.handle(event)
             }
             renderer.flush()
-            renderer.linkList().forEach(out::println)
         } catch (refused: OrknuxException) {
             err.println(theme.danger(refused.message ?: "The server could not answer."))
             return 1

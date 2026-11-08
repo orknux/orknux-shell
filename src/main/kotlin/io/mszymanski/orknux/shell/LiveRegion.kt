@@ -41,6 +41,9 @@ class LiveRegion(
     private var below: () -> List<String> = { emptyList() }
     /** Extra lines between the spinner and what is below, such as the approval's choices. */
     private var asking: String? = null
+    /** How to see the thinking, said after it on its line while there is thinking to see; null for nothing. */
+    @Volatile var thinkingHint: String? = null
+
     /** Whether the transcript's last line is a blank one; where it is not, the region keeps a blank row above itself. */
     private var afterBlank = true
 
@@ -64,6 +67,7 @@ class LiveRegion(
         active = false
         phaseKey = null
         thinking = null
+        thinkingHint = null
         asking = null
         if (ansi) sink(SHOW_CURSOR)
     }
@@ -143,12 +147,14 @@ class LiveRegion(
         // under it said the same thing twice.
         val thinkingNow = thinking != null && phaseKey == "thinking" && stopped == null
         thinking?.let { text ->
-            out += (if (thinkingNow) spinner else "") + theme.thinking("Thinking") + theme.muted(" · ${(clock() - thinkingStarted) / 1000}s")
+            out += (if (thinkingNow) spinner else "") + theme.thinking("Thinking") + theme.muted(" · ${(clock() - thinkingStarted) / 1000}s") +
+                (thinkingHint?.let { theme.dim(theme.muted(" · $it")) } ?: "")
             TurnRenderer.wrapped(text, w - 4).takeLast(THINKING_LINES).forEach { out += "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
         }
         val elapsed = (clock() - phaseStarted) / 1000
         if (!thinkingNow) {
-            out += stopped?.let { theme.warning("■ ") + it } ?: (spinner + phaseText + theme.muted(" · ${elapsed}s"))
+            val hint = thinkingHint?.takeIf { phaseKey == "thinking" }?.let { theme.dim(theme.muted(" · $it")) } ?: ""
+            out += stopped?.let { theme.warning("■ ") + it } ?: (spinner + phaseText + theme.muted(" · ${elapsed}s") + hint)
         }
         asking?.let { out += it }
         out += below()

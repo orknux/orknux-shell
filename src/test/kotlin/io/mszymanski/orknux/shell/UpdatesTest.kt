@@ -185,4 +185,15 @@ class UpdatesTest {
         assertFalse(Updater.verified(newBytes, sign(newBytes), keys), "a key made in this test is not the release key")
         assertTrue(Updater.verified(newBytes, sign(newBytes), listOf(ours.public)))
     }
+
+    @Test
+    fun `release notes are drawn as Markdown with room between sections, and cut at a section's end`() {
+        val notes = "### Added\n\n- One thing.\n- Another.\n\n### Fixed\n\n- A bug.\n"
+        val drawn = Interactive.releaseNotes(Theme(depth = ColourDepth.NONE), notes, 80).map { it.trimEnd() }
+        assertEquals(listOf("  Added", "", "    • One thing.", "    • Another.", "", "  Fixed", "", "    • A bug."), drawn)
+        val cut = Interactive.releaseNotes(Theme(depth = ColourDepth.NONE), notes, 80, most = 6)
+        assertEquals("  Added", cut.first())
+        assertFalse(cut.any { "A bug" in it }, cut.toString())
+        assertTrue(cut.last().contains("CHANGELOG.md"), cut.toString())
+    }
 }

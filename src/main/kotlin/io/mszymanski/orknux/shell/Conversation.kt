@@ -31,6 +31,9 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
     var llmSessionId: String? = null
         private set
 
+    /** How fast the model reads the prompt and writes its answer, as this conversation last measured them. */
+    val speeds = Speeds()
+
     private val body = AtomicReference<InputStream?>(null)
 
     @Volatile
@@ -99,12 +102,16 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
                 val event = ChatEvent.of(frame)
                 when (event) {
                     // Counted at once, so the status line moves as the turn ends; the chat's own totals replace it after.
-                    is ChatEvent.Done -> usage = usage.copy(
-                        inputTokens = usage.inputTokens + (event.inputTokens ?: 0),
-                        outputTokens = usage.outputTokens + (event.outputTokens ?: 0),
-                        cachedInputTokens = usage.cachedInputTokens + (event.cachedInputTokens ?: 0),
-                        cost = event.cost?.let { (usage.cost ?: 0.0) + it } ?: usage.cost,
-                    )
+                    is ChatEvent.Done -> {
+                        usage = usage.copy(
+                            inputTokens = usage.inputTokens + (event.inputTokens ?: 0),
+                            outputTokens = usage.outputTokens + (event.outputTokens ?: 0),
+                            cachedInputTokens = usage.cachedInputTokens + (event.cachedInputTokens ?: 0),
+                            cost = event.cost?.let { (usage.cost ?: 0.0) + it } ?: usage.cost,
+                        )
+                        event.generatedPerSecond?.takeIf { it > 0 }?.let { speeds.decoded(it) }
+                    }
+                    is ChatEvent.Reading -> speeds.read(event.processed)
                     is ChatEvent.Titled -> chat = chat?.copy(title = event.title)
                     is ChatEvent.Session -> llmSessionId = event.id
                     else -> {}
@@ -161,6 +168,51 @@ interface TurnOutput {
 data class ThinkingBlock(val text: String, val millis: Long)
 
 /**
+ * A model's two speeds, in tokens a second: eval, how fast it reads the
+ * prompt - measured from the server's reading progress as it arrives - and
+ * decode, how fast it writes, as the server measured it for the turn.
+ * Null where the provider reports nothing to measure them from.
+ */
+class Speeds(private val clock: () -> Long = System::currentTimeMillis) {
+    @Volatile var eval: Double? = null
+        private set
+    @Volatile var decode: Double? = null
+        private set
+    private var since = 0L
+    private var from = 0L
+    private var last = -1L
+
+    /** A reading report: [processed] tokens of the prompt so far; a smaller number than the last is the next request. */
+    fun read(processed: Long) {
+        val now = clock()
+        if (processed < last || last < 0) {
+            since = now
+            from = processed
+        } else if (now - since >= 300 && processed > from) {
+            eval = (processed - from) * 1000.0 / (now - since)
+        }
+        last = processed
+    }
+
+    fun decoded(perSecond: Double) {
+        decode = perSecond
+        last = -1
+    }
+
+    /** "eval 1.2k t/s · decode 48 t/s", what is known of it, or null. */
+    fun said(): String? = listOfNotNull(
+        eval?.let { "eval ${TurnRenderer.tokens(it.toLong())} t/s" },
+        decode?.let { "decode ${if (it >= 100) it.toLong().toString() else "%.1f".format(it)} t/s" },
+    ).joinToString(" · ").ifEmpty { null }
+}
+
+/** One piece of a turn's work, kept whole for Ctrl+O: a thought, or a tool call with all it was given and gave back. */
+sealed interface Detail {
+    data class Thought(val block: ThinkingBlock) : Detail
+    data class Tool(val name: String, val arguments: String, val result: String, val failed: Boolean, val millis: Long?) : Detail
+}
+
+/**
  * A turn's frames, made into what the person reads.
  *
  * The answer is drawn as markdown, a line at a time. Thinking is shown live
@@ -183,6 +235,9 @@ class TurnRenderer(
 
     /** This turn's thinking, every stretch in order: what Ctrl+O shows again. */
     val blocks = mutableListOf<ThinkingBlock>()
+
+    /** The turn's work in order, whole: what Ctrl+O shows. */
+    val details = mutableListOf<Detail>()
 
     /** Every link the answer drew, numbered from 1 by its place here. */
     val links: List<Pair<String, String>> get() = markdown.found
@@ -254,6 +309,7 @@ class TurnRenderer(
             is ChatEvent.Called -> {
                 val call = calls.remove(event.at)
                 val took = callStarted.remove(event.at)?.let { System.currentTimeMillis() - it }
+                details += Detail.Tool(call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took)
                 work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
                 out.phase("thinking", theme.thinking("Thinking"))
             }
@@ -275,7 +331,9 @@ class TurnRenderer(
             is ChatEvent.Compacted -> work(theme.muted("Compacted ${event.replaced} earlier turns into a summary (${tokens(event.tokens)} tokens)."))
             is ChatEvent.Drew -> answerLines(markdown.render(event.markdown))
             is ChatEvent.Filed -> work(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
-            is ChatEvent.Said -> work(theme.muted(event.text))
+            // What the model says while it works: its own lines, trimmed - it arrives with newlines after it, which
+            // written raw were rows the screen had not counted.
+            is ChatEvent.Said -> event.text.trim().takeIf { it.isNotEmpty() }?.let { said -> write(Kind.WORK, said.lines().map { theme.muted(markdown.inline(it)) }) }
             else -> {}
         }
     }
@@ -287,13 +345,6 @@ class TurnRenderer(
     }
 
     /** The answer's links, numbered for `/open`; nothing where there are none. */
-    fun linkList(): List<String> {
-        if (links.isEmpty()) return emptyList()
-        return listOf(theme.muted("Links (/open <n>):")) + links.mapIndexed { i, (label, url) ->
-            "  " + theme.accent("${i + 1}.") + " " + (if (label != url) "$label " else "") + theme.muted(url)
-        }
-    }
-
     // Set when a stretch has been folded, so the `thought` the server sends after it does not fold it twice.
     private var justClosed = false
 
@@ -307,6 +358,7 @@ class TurnRenderer(
         justClosed = true
         val block = ThinkingBlock(text, millis)
         blocks += block
+        details += Detail.Thought(block)
         write(Kind.WORK, fold(block, thinkingMode, theme, out.width()))
     }
 
@@ -333,11 +385,44 @@ class TurnRenderer(
             "hidden" -> emptyList()
             "expanded" -> listOf(theme.thinking("▾ Thought") + theme.muted(forHowLong(block.millis))) +
                 wrapped(block.text, width - 4).map { "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
-            else -> listOf(theme.thinking("▸ Thought") + theme.muted(forHowLong(block.millis)) + theme.dim(theme.muted("  (Ctrl+O to read)")))
+            else -> listOf(theme.thinking("▸ Thought") + theme.muted(forHowLong(block.millis)))
         }
 
         /** Nothing where the time is not known - a line from history kept none - which is a negative [millis]. */
         private fun forHowLong(millis: Long) = if (millis >= 0) " for ${seconds(millis)}" else ""
+
+        /**
+         * A turn's work written out in full, for reading on a page of its own:
+         * each thought whole, and each tool call with every argument and all
+         * it answered - a command's output as the lines it was, JSON indented.
+         */
+        fun detailLines(details: List<Detail>, theme: Theme, width: Int): List<String> {
+            val w = (width - 6).coerceAtLeast(20)
+            fun readable(text: String): List<String> {
+                val node = runCatching { Json.parse(text) }.getOrNull()
+                if (node == null || !(node.isObject || node.isArray)) return text.lines()
+                // A command's answer: its streams as they were printed, rather than as JSON strings.
+                if (node.isObject && (node.has("stdout") || node.has("stderr"))) {
+                    val rest = (node.deepCopy() as com.fasterxml.jackson.databind.node.ObjectNode).apply { remove("stdout"); remove("stderr") }
+                    return listOfNotNull(
+                        rest.takeIf { it.size() > 0 }?.let { r -> r.properties().joinToString(" · ") { (k, v) -> "$k ${if (v.isTextual) v.textValue() else v.toString()}" } },
+                    ) + (node.get("stdout")?.asText()?.trimEnd()?.takeIf { it.isNotEmpty() }?.lines() ?: emptyList()) +
+                        (node.get("stderr")?.asText()?.trimEnd()?.takeIf { it.isNotEmpty() }?.lines()?.map { theme.warning(it) } ?: emptyList())
+                }
+                return Json.pretty(node).lines()
+            }
+            fun indented(lines: List<String>) = lines.flatMap { line -> if (visibleLength(line) <= w) listOf(line) else wrapped(stripAnsi(line), w) }.map { "    $it" }
+            return details.flatMap { detail ->
+                when (detail) {
+                    is Detail.Thought -> fold(detail.block, "expanded", theme, width) + ""
+                    is Detail.Tool -> listOf(
+                        (if (detail.failed) theme.danger("✗ ") else theme.success("✓ ")) + theme.bold(detail.name) +
+                            (detail.millis?.let { theme.muted(" · %.1fs".format(it / 1000.0)) } ?: ""),
+                        theme.muted("  given"),
+                    ) + indented(readable(detail.arguments.ifBlank { "{}" })) + theme.muted("  answered") + indented(readable(detail.result)) + ""
+                }
+            }
+        }
 
         fun wrapped(text: String, width: Int): List<String> {
             val w = width.coerceAtLeast(20)
