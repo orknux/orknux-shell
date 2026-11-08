@@ -4,6 +4,13 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.24
+
+### Changed
+
+- agent_create and ask_agent are shown as every other tool call again, with
+  what they answered: 1.0.23's shortened lines are taken back.
+
 ## 1.0.23
 
 ### Changed

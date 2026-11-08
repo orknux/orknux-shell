@@ -412,28 +412,8 @@ class TurnRenderer(
             val time = millis?.let { " · " + seconds(it) } ?: ""
             val head = (if (bad) theme.danger("✗") else theme.success("✓")) + " " + theme.bold(tool) + theme.muted(" $what$time")
             val room = width - visibleLength(head) - 4
-            val summary = agentSummary(tool, arguments, result, bad) ?: resultSummary(result, room.coerceAtLeast(12))
+            val summary = resultSummary(result, room.coerceAtLeast(12))
             return head + theme.muted(" · ") + if (bad) theme.danger(summary) else theme.dim(theme.muted(summary))
-        }
-
-        /**
-         * Making and asking agents, folded to what was done rather than the JSON
-         * that said so - "tools http_get, web_search", "Fetch live data from three
-         * sites" - its whole answer under Ctrl+O. Null for any other tool, or one
-         * that failed, whose own words are the summary.
-         */
-        fun agentSummary(tool: String, arguments: String, result: String, failed: Boolean): String? {
-            if (failed) return null
-            val answer = runCatching { Json.parse(result) }.getOrNull()?.takeIf { it.isObject } ?: return null
-            return when (tool) {
-                "agent_create" -> {
-                    val tools = answer.get("tools")?.takeIf { it.isArray }?.map { it.asText() }.orEmpty()
-                    if (tools.isEmpty()) "no tools" else "tools " + tools.joinToString(", ")
-                }
-                "ask_agent" -> answer.str("about") ?: runCatching { Json.parse(arguments).str("message") }.getOrNull()?.let { oneLine(it) }
-                "agent_dismiss" -> "dismissed"
-                else -> null
-            }
         }
 
         /** A stretch of thinking as the transcript keeps it: one line, the whole of it, or nothing. */
