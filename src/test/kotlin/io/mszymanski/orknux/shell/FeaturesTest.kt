@@ -67,14 +67,16 @@ class FeaturesTest {
     @Test
     fun `a pasted path is found bare, quoted, escaped, as a file address and on Windows`() {
         val files = setOf("/home/a/report.pdf", "/home/a/my notes.txt", "C:\\Users\\a\\My Report.pdf", "/tmp/a.png", "/tmp/b.png", "\\\\server\\share\\x.txt")
-        val exists = { p: String -> p in files }
+        // What a file address means is the system's: \home\a\my notes.txt on Windows.
+        val fromAddress = Path.of(java.net.URI("file:///home/a/my%20notes.txt")).toString()
+        val exists = { p: String -> p in files || p == fromAddress }
         assertEquals(listOf("/home/a/report.pdf"), PastedPaths.detect("/home/a/report.pdf", "/home/a", exists))
         assertEquals(listOf("/home/a/report.pdf"), PastedPaths.detect("  ~/report.pdf ", "/home/a", exists))
         assertEquals(listOf("/home/a/my notes.txt"), PastedPaths.detect("'/home/a/my notes.txt'", "/home/a", exists))
         assertEquals(listOf("/home/a/my notes.txt"), PastedPaths.detect("\"/home/a/my notes.txt\"", "/home/a", exists))
         assertEquals(listOf("/home/a/my notes.txt"), PastedPaths.detect("/home/a/my\\ notes.txt", "/home/a", exists))
         assertEquals(listOf("/home/a/my notes.txt"), PastedPaths.detect("/home/a/my notes.txt", "/home/a", exists))
-        assertEquals(listOf("/home/a/my notes.txt"), PastedPaths.detect("file:///home/a/my%20notes.txt", "/home/a", exists))
+        assertEquals(listOf(fromAddress), PastedPaths.detect("file:///home/a/my%20notes.txt", "/home/a", exists))
         assertEquals(listOf("C:\\Users\\a\\My Report.pdf"), PastedPaths.detect("C:\\Users\\a\\My Report.pdf", "/home/a", exists))
         assertEquals(listOf("C:\\Users\\a\\My Report.pdf"), PastedPaths.detect("\"C:\\Users\\a\\My Report.pdf\"", "/home/a", exists))
         assertEquals(listOf("\\\\server\\share\\x.txt"), PastedPaths.detect("\\\\server\\share\\x.txt", "/home/a", exists))
@@ -314,7 +316,7 @@ class FeaturesTest {
         assertEquals(emptyList(), Review.findings("All good.\n```findings\nnone\n```"))
         val lines = Review.render(findings, Path.of("/repo"), plain, Links(true, null))
         assertEquals("Findings", lines[0])
-        assertEquals("  high     \u001b]8;;file:///repo/src/a.kt\u001b\\src/a.kt:12\u001b]8;;\u001b\\ The stream is never closed", lines[1])
+        assertEquals("  high     \u001b]8;;${Links.fileUrl(Path.of("/repo/src/a.kt"))}\u001b\\src/a.kt:12\u001b]8;;\u001b\\ The stream is never closed", lines[1])
         assertEquals(listOf("No findings."), Review.render(emptyList(), Path.of("/repo"), plain, Links(false, null)))
         assertNotNull(Review.findings(answer).firstOrNull())
     }

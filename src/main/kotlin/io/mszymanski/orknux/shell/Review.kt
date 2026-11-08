@@ -31,7 +31,8 @@ object Review {
     fun gather(request: ReviewRequest, directory: Path, limit: Int = LIMIT): ReviewDiff {
         val top = git(directory, "rev-parse", "--show-toplevel")
         if (top.exit != 0) throw OrknuxException("$directory is not inside a git repository. /review reviews the changes of the repository Orknux Shell runs in.")
-        val root = Path.of(top.out.trim())
+        // Real paths on both sides: on Windows git answers the long name and a temp directory may be the 8.3 one.
+        val root = Path.of(top.out.trim()).toRealPath()
         val hasHead = git(root, "rev-parse", "--verify", "--quiet", "HEAD").exit == 0
         val target = request.target
         val (description, parts) = when {
@@ -43,7 +44,8 @@ object Review {
                 "the commits on HEAD since it left $target" to splitFiles(diff.out)
             }
             Files.exists(directory.resolve(target)) -> {
-                val relative = root.relativize(directory.resolve(target).toAbsolutePath().normalize()).toString().ifEmpty { "." }
+                // Forward slashes: a git pathspec, on Windows too.
+                val relative = root.relativize(directory.resolve(target).toRealPath()).toString().replace('\\', '/').ifEmpty { "." }
                 "the uncommitted changes under $relative" to uncommitted(root, hasHead, relative)
             }
             else -> throw OrknuxException("\"$target\" is neither a branch or commit nor a path here.")

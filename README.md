@@ -5,6 +5,35 @@ style of Claude Code, where the agent can also run commands on this computer -
 with your approval wherever your rules, `sudo` or the agent's own caution say
 to ask.
 
+## Installing
+
+Linux (x86-64; glibc of Ubuntu 24.04, Debian 13, Fedora 40 or newer):
+
+```
+curl -fsSL https://raw.githubusercontent.com/orknux/orknux-shell/main/install.sh | sh
+```
+
+Windows (x64), in PowerShell:
+
+```
+irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1 | iex
+```
+
+Both take the newest release, check it against the release's `SHA256SUMS`
+before putting it in place, and need no root or administrator: Linux installs
+to `~/.local/bin` (`ORKNUX_SHELL_DIR` to choose), Windows to
+`%LOCALAPPDATA%\Programs\orknux-shell`, which it adds to your PATH. Running
+either again updates. Options: `--version v1.0.0` / `-Version v1.0.0` for a
+given release, `--uninstall` / `-Uninstall` to remove it, with `--purge` /
+`-Purge` to remove the sign-in too. On Linux, pass them as
+`curl ... | sh -s -- --uninstall`; on Windows, as
+`& ([scriptblock]::Create((irm .../install.ps1))) -Uninstall`.
+
+Anywhere else, the jar on the [releases page](https://github.com/orknux/orknux-shell/releases)
+runs with Java 25: `java -jar orknux-shell.jar`.
+
+## Using it
+
 ```
 orknux-shell                      chat (asks for a server and signs in the first time)
 orknux-shell login [server]       sign in: server, username, password (never echoed)
