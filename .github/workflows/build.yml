@@ -1,0 +1,83 @@
+# Builds Orknux Shell: the suite on the JVM, then native binaries for Linux and
+# Windows, and the Linux binary run through the same integration test. A tag
+# v* attaches both binaries and the jar to a GitHub release.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            binary: orknux-shell
+          - os: windows-latest
+            name: windows-x64
+            binary: orknux-shell.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: 'maven'
+
+      - name: Test and package
+        shell: bash
+        run: ./mvnw -B package
+
+      - name: Native image
+        shell: bash
+        run: native-image -jar target/orknux-shell.jar -o target/orknux-shell
+
+      - name: Smoke test
+        shell: bash
+        run: ./target/${{ matrix.binary }} --version
+
+      # The conversation the suite has in-process, held by the binary instead.
+      - name: Integration test against the binary
+        if: runner.os == 'Linux'
+        run: ./mvnw -B test -Dtest=IntegrationTest -Dorknux.shell.binary=$PWD/target/orknux-shell
+
+      - name: Name the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/orknux-shell.exe dist/orknux-shell-${{ matrix.name }}.exe
+          else
+            cp target/orknux-shell dist/orknux-shell-${{ matrix.name }}
+            cp target/orknux-shell.jar dist/orknux-shell.jar
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orknux-shell-${{ matrix.name }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
