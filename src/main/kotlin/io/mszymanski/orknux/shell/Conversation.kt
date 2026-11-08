@@ -134,6 +134,14 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
         }
     }
 
+    /** A turn the server runs by itself, followed from here: Ctrl+C stops it as it stops one sent from here. */
+    fun following(stream: InputStream) {
+        interruptedOnce = false
+        body.set(stream)
+    }
+
+    fun followed() = body.set(null)
+
     /** First press asks the server to stop the answer; the second stops waiting for it. */
     fun interrupt(): String {
         val open = chat ?: return "Nothing is running."
@@ -226,6 +234,8 @@ class TurnRenderer(
     private val out: TurnOutput,
     private val thinkingMode: String = "collapsed",
     links: Links = Links(false, null),
+    /** Whether each tool call is written out in full - its arguments and all it answered - rather than as one line. */
+    private val detailed: () -> Boolean = { false },
 ) {
     private val markdown = Markdown(theme, { out.width() }, links)
     private val thinking = StringBuilder()
@@ -311,8 +321,10 @@ class TurnRenderer(
             is ChatEvent.Called -> {
                 val call = calls.remove(event.at)
                 val took = callStarted.remove(event.at)?.let { System.currentTimeMillis() - it }
-                details += Detail.Tool(call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took)
-                work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
+                val tool = Detail.Tool(call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took)
+                details += tool
+                if (detailed()) write(Kind.WORK, detailLines(listOf(tool), theme, out.width()).dropLastWhile { it.isEmpty() })
+                else work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
                 out.phase("thinking", theme.thinking("Thinking"))
             }
             is ChatEvent.Chunk -> {

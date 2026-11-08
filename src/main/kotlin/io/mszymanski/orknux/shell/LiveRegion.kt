@@ -153,7 +153,7 @@ class LiveRegion(
         }
         val elapsed = (clock() - phaseStarted) / 1000
         if (!thinkingNow) {
-            val hint = thinkingHint?.takeIf { phaseKey == "thinking" }?.let { theme.dim(theme.muted(" · $it")) } ?: ""
+            val hint = thinkingHint?.let { theme.dim(theme.muted(" · $it")) } ?: ""
             out += stopped?.let { theme.warning("■ ") + it } ?: (spinner + phaseText + theme.muted(" · ${elapsed}s") + hint)
         }
         asking?.let { out += it }

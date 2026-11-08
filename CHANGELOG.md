@@ -4,6 +4,23 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.8
+
+### Changed
+
+- The prompt and the status bar are at the foot of the window again, the
+  prompt directly above the bar, the conversation growing up from there, as
+  in 1.0.5. The workspace is at the bar's right and in the window's title.
+- Ctrl+O during a turn shows its details: the thinking as it streams, and
+  every tool call from then on written out in full - what it was given and
+  all it answered. Again for one line each. The spinner's line says so.
+
+### Fixed
+
+- Ctrl+C did nothing in the turn an answer to the agent's question started,
+  nor did Ctrl+O; that turn now takes the same keys as any other.
+- A blank line above "Answered".
+
 ## 1.0.7
 
 ### Fixed
