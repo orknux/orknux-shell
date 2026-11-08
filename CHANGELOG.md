@@ -4,7 +4,7 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
-## Unreleased
+## 1.0.6
 
 ### Added
 
@@ -31,6 +31,8 @@ refuses a tag with no section here.
 
 ### Fixed
 
+- "Reading the conversation" no longer goes past 100% with a server that
+  counts the cached tokens in what it has processed.
 - Resizing the window redraws the status line at the new width: while a line
   was being read the line editor held the resize signal, and it kept the old one.
 

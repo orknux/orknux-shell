@@ -183,4 +183,17 @@ class RenderingTest {
         now = 5000; speeds.read(100); now = 5500; speeds.read(600)
         assertEquals("eval 1.0k t/s · decode 48.3 t/s", speeds.said(), "the next request's own rate")
     }
+
+    @Test
+    fun `reading progress is a share of the whole, whether or not the server counts the cached in it`() {
+        val phases = mutableListOf<String>()
+        val renderer = TurnRenderer(plain, object : TurnOutput {
+            override fun line(text: String) {}
+            override fun phase(key: String, text: String) { phases += stripAnsi(text) }
+        })
+        renderer.handle(ChatEvent.Reading(43_000, 26_000, 39_000))
+        renderer.handle(ChatEvent.Reading(43_000, 26_000, 8_500))
+        assertTrue(phases[0].startsWith("Reading the conversation 90%"), phases[0])
+        assertTrue(phases[1].startsWith("Reading the conversation 80%"), phases[1])
+    }
 }

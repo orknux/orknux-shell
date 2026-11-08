@@ -293,7 +293,10 @@ class TurnRenderer(
                 "Preparing a tool call" + (event.tool?.let { ": " + theme.accent(it) } ?: "") + theme.muted(" · ${event.chars} chars"),
             )
             is ChatEvent.Reading -> {
-                val share = if (event.total > 0) " ${(event.processed + event.cached) * 100 / event.total}%" else ""
+                // Some servers count the cached tokens in what they report processed, some do not: where adding the two
+                // would be more than the whole, the processed count already holds them. Never past 100.
+                val done = if (event.processed + event.cached <= event.total) event.processed + event.cached else event.processed
+                val share = if (event.total > 0) " ${(done * 100 / event.total).coerceIn(0, 100)}%" else ""
                 out.phase("reading", "Reading the conversation$share" + theme.muted(" · ${tokens(event.total)} tokens, ${tokens(event.cached)} cached"))
             }
             is ChatEvent.Call -> {
