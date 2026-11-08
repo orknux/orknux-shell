@@ -7,7 +7,8 @@
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1))) -Version v1.0.0
 #   ... -Uninstall [-Purge]
 #
-# Installs into %LOCALAPPDATA%\Programs\orknux-shell and puts that folder on the
+# Installs orknux.exe, with orkx.cmd as its short name, into
+# %LOCALAPPDATA%\Programs\orknux-shell and puts that folder on the
 # user's PATH. Needs no administrator. Settings and sign-in live in the user's
 # profile and are left alone by -Uninstall unless -Purge is given too.
 param(
@@ -21,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is many times slower drawing its bar
 $Repo = 'orknux/orknux-shell'
 $Asset = 'orknux-shell-windows-x64.exe'
-$Target = Join-Path $Dir 'orknux-shell.exe'
+$Target = Join-Path $Dir 'orknux.exe'
 
 # Thrown, not exit: run through iex, exit would close the person's PowerShell window.
 function Fail($Said) { throw "orknux-shell install: $Said" }
@@ -36,6 +37,7 @@ function Get-UserPath {
 
 if ($Uninstall) {
     if (Test-Path $Target) { Remove-Item -Force $Target; Write-Host "Removed $Target." } else { Write-Host "Nothing at $Target." }
+    Remove-Item -Force (Join-Path $Dir 'orkx.cmd'), (Join-Path $Dir 'orknux-shell.exe') -ErrorAction SilentlyContinue
     if ((Test-Path $Dir) -and -not (Get-ChildItem $Dir -Force)) { Remove-Item -Force $Dir }
     $rest = Get-UserPath | Where-Object { $_.TrimEnd('\') -ne $Dir.TrimEnd('\') }
     Set-UserPath $rest
@@ -79,6 +81,10 @@ try {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
     try {
         Move-Item -Force (Join-Path $Work $Asset) $Target
+        # orkx, the short name: a one-line shim rather than a second 40 MB copy.
+        Set-Content -Encoding ascii -Path (Join-Path $Dir 'orkx.cmd') -Value '@"%~dp0orknux.exe" %*'
+        # Installed as orknux-shell.exe before 1.0.0 was renamed: that copy would never be updated again.
+        Remove-Item -Force (Join-Path $Dir 'orknux-shell.exe') -ErrorAction SilentlyContinue
     } catch {
         Fail "could not replace $Target - close Orknux Shell where it is running and try again"
     }
@@ -93,9 +99,9 @@ Write-Host "Installed $installed at $Target."
 $entries = Get-UserPath
 if (-not ($entries | Where-Object { $_.TrimEnd('\') -eq $Dir.TrimEnd('\') })) {
     Set-UserPath ($entries + $Dir)
-    Write-Host "Added $Dir to your PATH. Open a new terminal, then run: orknux-shell"
+    Write-Host "Added $Dir to your PATH. Open a new terminal, then run: orknux (or orkx)"
 } else {
-    Write-Host "Run: orknux-shell"
+    Write-Host "Run: orknux (or orkx)"
 }
 # This window too, so it works without opening another.
 if (-not (($env:Path -split ';') -contains $Dir)) { $env:Path = "$env:Path;$Dir" }

@@ -6,7 +6,8 @@
 #   curl -fsSL .../install.sh | sh -s -- --version v1.0.0
 #   curl -fsSL .../install.sh | sh -s -- --uninstall
 #
-# Installs into ~/.local/bin, or ORKNUX_SHELL_DIR when set. Needs no root: run
+# Installs into ~/.local/bin, or ORKNUX_SHELL_DIR when set, as orknux, with
+# orkx beside it as the short name. Needs no root: run
 # it as the person who will use it. Settings and sign-in live in
 # ~/.config/orknux/orknux-shell.json and are left alone by --uninstall unless --purge is
 # given too.
@@ -33,10 +34,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-TARGET="$DIR/orknux-shell"
+TARGET="$DIR/orknux"
 
 if [ "$UNINSTALL" = yes ]; then
   if [ -e "$TARGET" ]; then rm -f "$TARGET"; say "Removed $TARGET."; else say "Nothing at $TARGET."; fi
+  if [ -L "$DIR/orkx" ] && [ "$(readlink "$DIR/orkx")" = orknux ]; then rm -f "$DIR/orkx"; fi
+  rm -f "$DIR/orknux-shell"
   if [ "$PURGE" = yes ]; then
     CONFIG="${ORKNUX_SHELL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/orknux/orknux-shell.json}"
     if [ -e "$CONFIG" ]; then rm -f "$CONFIG"; say "Removed $CONFIG, with the sign-in it held."; fi
@@ -91,13 +94,17 @@ chmod 755 "$WORK/$ASSET"
 # Moved into place in one step, so a running copy is never half-overwritten.
 mv -f "$WORK/$ASSET" "$TARGET.new"
 mv -f "$TARGET.new" "$TARGET"
+# orkx, the short name, as a link to it.
+ln -sfn orknux "$DIR/orkx"
+# Installed as orknux-shell before 1.0.0 was renamed: that copy would never be updated again.
+rm -f "$DIR/orknux-shell"
 
 INSTALLED="$("$TARGET" --version 2>/dev/null || true)"
 [ -n "$INSTALLED" ] || fail "installed $TARGET, but it does not start here (it needs a recent glibc: Ubuntu 24.04, Debian 13, Fedora 40 or newer)"
 say "Installed $INSTALLED at $TARGET."
 
 case ":$PATH:" in
-  *":$DIR:"*) say "Run: orknux-shell" ;;
+  *":$DIR:"*) say "Run: orknux (or orkx)" ;;
   *)
     say ""
     say "$DIR is not on your PATH. Add it, then open a new terminal:"

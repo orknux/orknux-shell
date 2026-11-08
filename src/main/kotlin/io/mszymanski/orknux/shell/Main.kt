@@ -33,14 +33,14 @@ object Cli {
         Orknux Shell ${Version.VERSION} - Orknux in the terminal.
 
         Usage:
-          orknux-shell                         Chat with an agent (asks for a server and signs in the first time)
-          orknux-shell login [server]          Sign in: asks for the server, username and password
+          orknux                               Chat with an agent (asks for a server and signs in the first time)
+          orknux login [server]                Sign in: asks for the server, username and password
               --token orkx_...                 Sign in with an access token instead
               --username NAME                  Do not ask for the username
               --password-stdin                 Read the password from standard input
-          orknux-shell logout                  Sign out, and forget the session
-          orknux-shell -p "message"            Say one thing, print the answer, and leave
-          orknux-shell --version               The version
+          orknux logout                        Sign out, and forget the session
+          orknux -p "message"                  Say one thing, print the answer, and leave
+          orknux --version                     The version
 
         Options for a chat:
           --workspace NAME   --agent NAME   --mode auto|ask|plan   --config FILE
@@ -66,8 +66,8 @@ object Cli {
                 "--mode" -> o = o.copy(mode = value(a).lowercase().also { require(it in Modes.ALL) { "--mode is one of ${Modes.ALL.joinToString()}" } })
                 "--config" -> o = o.copy(config = value(a))
                 else -> {
-                    if (a.startsWith("-")) throw IllegalArgumentException("Unknown option $a. See orknux-shell --help.")
-                    if (o.positional != null) throw IllegalArgumentException("Unexpected $a. See orknux-shell --help.")
+                    if (a.startsWith("-")) throw IllegalArgumentException("Unknown option $a. See orknux --help.")
+                    if (o.positional != null) throw IllegalArgumentException("Unexpected $a. See orknux --help.")
                     o = o.copy(positional = a)
                 }
             }
@@ -128,7 +128,7 @@ object Cli {
     private fun printMode(store: ConfigStore, options: Options): Int {
         val config = store.load()
         if (!config.signedIn) {
-            System.err.println("Not signed in. Run: orknux-shell login")
+            System.err.println("Not signed in. Run: orknux login")
             return 1
         }
         val api = Api(Connection.clientFor(store, config))

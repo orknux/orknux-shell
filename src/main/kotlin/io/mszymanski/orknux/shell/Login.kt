@@ -74,7 +74,7 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
             "OIDC" -> {
                 prompter.say(
                     "${client.server} signs in through ${method.str("displayName") ?: "single sign-on"} in a browser. " +
-                        "Make an access token in Orknux (your profile, Access tokens) and run: orknux-shell login ${client.server} --token orkx_...",
+                        "Make an access token in Orknux (your profile, Access tokens) and run: orknux login ${client.server} --token orkx_...",
                 )
                 return null
             }

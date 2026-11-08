@@ -152,7 +152,7 @@ class OrknuxClient(
         body.put("query", query)
         body.set<JsonNode>("variables", variables)
         val reply = post("/graphql", body)
-        if (reply.status == 401 || reply.status == 403) throw OrknuxException("Not signed in to $server, or the sign-in has expired. Run: orknux-shell login", reply.status)
+        if (reply.status == 401 || reply.status == 403) throw OrknuxException("Not signed in to $server, or the sign-in has expired. Run: orknux login", reply.status)
         if (!reply.ok) throw OrknuxException(refusalOf(reply.status, reply.body), reply.status)
         val json = runCatching { reply.json() }.getOrElse { throw OrknuxException("The server answered something that is not JSON.") }
         json.list("errors").firstOrNull()?.let { error ->
@@ -227,7 +227,7 @@ class OrknuxClient(
             val said = json?.let { it.str("detail") ?: it.str("message") ?: it.str("reason") ?: it.str("error") }
             return when {
                 said != null -> said
-                status == 401 -> "Not signed in, or the sign-in has expired. Run: orknux-shell login"
+                status == 401 -> "Not signed in, or the sign-in has expired. Run: orknux login"
                 status == 403 -> "The server refused (403)."
                 status == 404 -> "The server has no such address (404)."
                 else -> "The server answered $status."

@@ -20,8 +20,9 @@ irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1 | iex
 ```
 
 Both take the newest release, check it against the release's `SHA256SUMS`
-before putting it in place, and need no root or administrator: Linux installs
-to `~/.local/bin` (`ORKNUX_SHELL_DIR` to choose), Windows to
+before putting it in place, and need no root or administrator. The command is
+`orknux`, with `orkx` as its short name. Linux installs to `~/.local/bin`
+(`ORKNUX_SHELL_DIR` to choose), Windows to
 `%LOCALAPPDATA%\Programs\orknux-shell`, which it adds to your PATH. Running
 either again updates. Options: `--version v1.0.0` / `-Version v1.0.0` for a
 given release, `--uninstall` / `-Uninstall` to remove it, with `--purge` /
@@ -35,13 +36,14 @@ runs with Java 25: `java -jar orknux-shell.jar`.
 ## Using it
 
 ```
-orknux-shell                      chat (asks for a server and signs in the first time)
-orknux-shell login [server]       sign in: server, username, password (never echoed)
-orknux-shell login URL --token orkx_...   sign in with an access token instead
-orknux-shell logout
-orknux-shell -p "message"         say one thing, print the answer, leave
-orknux-shell --version
+orknux                      chat (asks for a server and signs in the first time)
+orknux login [server]       sign in: server, username, password (never echoed)
+orknux login URL --token orkx_...   sign in with an access token instead
+orknux logout
+orknux -p "message"         say one thing, print the answer, leave
+orknux --version
 ```
+`orkx` does the same as `orknux` everywhere.
 
 ## In the chat
 

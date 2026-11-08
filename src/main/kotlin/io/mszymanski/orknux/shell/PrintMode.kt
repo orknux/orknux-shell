@@ -4,7 +4,7 @@ import java.io.BufferedReader
 import java.io.PrintStream
 
 /**
- * `orknux-shell -p "message"`: one message, the answer on standard output,
+ * `orknux -p "message"`: one message, the answer on standard output,
  * and out. For scripts, and for testing the binary without a terminal.
  *
  * The device door is open while the answer is written, so the agent can run
