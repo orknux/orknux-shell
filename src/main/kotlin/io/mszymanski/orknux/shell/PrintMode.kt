@@ -82,7 +82,7 @@ class PrintMode(
         err.println(
             theme.muted(
                 "${workspace.name} · ${conversation.agent?.name ?: conversation.chat?.agentName ?: "agent"} · ${conversation.mode} · " +
-                    "↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached) · ${TurnRenderer.cost(u.cost)}",
+                    "↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)" + (u.cost?.let { " · " + TurnRenderer.cost(it) } ?: ""),
             ),
         )
         return if (failed || !renderer.answered) 1 else 0
