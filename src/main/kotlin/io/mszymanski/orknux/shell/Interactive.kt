@@ -70,6 +70,42 @@ class Interactive(
     @Volatile private var thinkingSince = 0L
     @Volatile private var wakeForApproval = false
 
+    /**
+     * While a turn runs: the status bar's tokens and the count of subagents
+     * kept current. The chat's own totals grow only when a turn ends; its
+     * session's grow with every round, so they are read every few seconds
+     * and shown where they are ahead.
+     */
+    private fun followLive() {
+        Thread.ofVirtual().name("orknux-live-usage").start {
+            // What the session had spent as the turn began, and the chat's totals then: what the session spends from
+            // here is added to those, so the bar only grows and agrees with the chat's own totals when the turn ends.
+            val c0 = conversationOrNull()
+            val from = c0?.usage
+            // A chat's first turn has no session yet: it is made by the turn, and everything it spends is this turn's.
+            val base = c0?.llmSessionId?.let { id -> runCatching { api.session(id) }.getOrNull()?.let { it.inputTokens to it.outputTokens } } ?: (0L to 0L)
+            while (phase == Phase.TURN) {
+                try {
+                    Thread.sleep(LIVE_MILLIS)
+                } catch (_: InterruptedException) {
+                    return@start
+                }
+                if (phase != Phase.TURN) break
+                val c = conversationOrNull() ?: continue
+                val id = c.llmSessionId ?: continue
+                if (c !== c0 || from == null) {
+                    countSessions(force = true)
+                    continue
+                }
+                runCatching { api.session(id) }.getOrNull()?.let { s ->
+                    val more = c.sessionSoFar(from.inputTokens + (s.inputTokens - base.first), from.outputTokens + (s.outputTokens - base.second))
+                    if (more) footer()
+                }
+                countSessions(force = true)
+            }
+        }
+    }
+
     /** Ctrl+T pressed at the prompt: the line is set aside, the list shown, and the line given back. */
     @Volatile private var sessionsAsked = false
     @Volatile private var lastTurn: TurnRenderer? = null
@@ -634,6 +670,7 @@ class Interactive(
         active = into
         lastTurn = renderer
         phase = Phase.TURN
+        followLive()
         // The status bar stays where it is, at the foot of the screen, and is kept up to date by the ticker.
         val saved = terminal.enterRawMode()
         val raw = terminal.attributes
@@ -803,6 +840,7 @@ class Interactive(
         active = into
         lastTurn = renderer
         phase = Phase.TURN
+        followLive()
         val saved = terminal.enterRawMode()
         val raw = terminal.attributes
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
@@ -1529,10 +1567,13 @@ class Interactive(
             readingRoot = own
         }
         val found = buildList {
-            api.session(own)?.let { add(Found(it, "this chat")) }
-            api.subagents(own).forEach { add(Found(it, "asked")) }
-            sideChats.values.forEach { side -> side.llmSessionId?.let { id -> api.session(id)?.let { add(Found(it, "@agent", side.chat?.id)) } } }
-        }.sortedByDescending { it.session.active }
+            api.session(own)?.let { add(Found(it, MAIN)) }
+            // The rest under it, active ones first; the chat's own stays on top, whichever one is being read.
+            addAll(buildList {
+                api.subagents(own).forEach { add(Found(it, "asked")) }
+                sideChats.values.forEach { side -> side.llmSessionId?.let { id -> api.session(id)?.let { add(Found(it, "@agent", side.chat?.id)) } } }
+            }.sortedByDescending { it.session.active })
+        }
         sessionCount = (found.size - 1).coerceAtLeast(0)
         if (found.isEmpty()) {
             say(theme.muted("No sessions found for this chat."))
@@ -1541,7 +1582,7 @@ class Interactive(
         // "Active" as the server means it - an agent at work in it now, or a moment ago - not a claim that a turn is running.
         val active = found.count { it.session.active }
         say(theme.bold("Sessions of this chat") + theme.muted(" · ${found.size}, $active active"))
-        val shown = found.indexOfFirst { if (reading == null) it.kind == "this chat" else it.session.sessionId == reading }.coerceAtLeast(0)
+        val shown = found.indexOfFirst { if (reading == null) it.kind == MAIN else it.session.sessionId == reading }.coerceAtLeast(0)
         val chosen = chooseFrom("Sessions", found, shown, closeKey = SESSIONS_KEY) { f ->
             val s = f.session
             (if (s.active) theme.success("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
@@ -1567,7 +1608,7 @@ class Interactive(
         say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
         say("")
         when {
-            found.kind == "this chat" -> {
+            found.kind == MAIN -> {
                 reading = null
                 conversation.chat?.let { printHistory(api.messages(it.id)) }
             }
@@ -2050,6 +2091,7 @@ class Interactive(
             val renderer = TurnRenderer(theme, output, if (config.thinking == "hidden") "hidden" else "collapsed", links)
             var followed = false
             phase = Phase.TURN
+        followLive()
             region.phase("goal", "Goal · iteration ${(goal?.iteration ?: 0) + 1} of ${goal?.maxIterations ?: "∞"} · working")
             region.start { below() }
             val ticker = Thread.ofPlatform().daemon().start {
@@ -2280,6 +2322,10 @@ class Interactive(
         /** Ctrl+T: the sessions of this chat, opened and closed again. */
         const val SESSIONS_KEY = 20
         const val SESSION_COUNT_MILLIS = 5_000L
+        const val LIVE_MILLIS = 4_000L
+
+        /** The chat's own session, as /sessions names it: the one the others were asked from. */
+        const val MAIN = "main"
 
         /** How long the terminal has to say where the cursor is. */
         const val CURSOR_ANSWER_MILLIS = 800L

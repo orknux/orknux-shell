@@ -93,6 +93,8 @@ class LiveRegion(
     /** Back on the conversation's screen: what came meanwhile is written, and the region drawn again. */
     fun resume() = synchronized(lock) {
         paused = false
+        // Whatever ran meanwhile - a list - showed the cursor again on its way out; the region keeps it hidden.
+        if (ansi && active) sink(HIDE_CURSOR)
         // The conversation's screen comes back as it was, the region's rows on it and the cursor where it was:
         // they are erased and drawn again from there, as on any other redraw.
         val waiting = held.toList()

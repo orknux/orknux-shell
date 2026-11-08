@@ -4,6 +4,26 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.23
+
+### Changed
+
+- Making and asking agents fold to what was done: "✓ agent_create greeter ·
+  tools http_get, web_search", "✓ ask_agent asked web-fetcher · Fetch live
+  data from three sites" - not the JSON that said so, which Ctrl+O still
+  shows whole.
+- /sessions puts the chat's own session first, as "(main)", whichever one is
+  being read; the agents it asked and the side chats follow, active ones
+  first.
+
+### Fixed
+
+- The status bar's tokens grow while a turn runs, from what its session has
+  spent so far, rather than only when it ends; and the count of subagents
+  follows as agents are asked during the turn.
+- The cursor no longer shows at the end of the typing line after a list or a
+  command run during a turn; it had to be typed away.
+
 ## 1.0.22
 
 ### Fixed
