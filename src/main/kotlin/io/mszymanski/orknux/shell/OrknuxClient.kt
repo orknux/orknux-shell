@@ -29,6 +29,9 @@ data class Reply(val status: Int, val body: String) {
  * is how the server's cross-site guard tells this from a page on another site
  * borrowing the cookie; a bearer token needs no Origin, and gets one anyway.
  */
+/** This running Shell, for as long as the process lives. */
+val INSTANCE: String = java.util.UUID.randomUUID().toString()
+
 class OrknuxClient(
     server: String,
     private val token: String? = null,
@@ -52,6 +55,9 @@ class OrknuxClient(
     private fun builder(path: String, timeout: Duration?): HttpRequest.Builder {
         val b = HttpRequest.newBuilder(uri(path)).header("Accept", "application/json, text/event-stream")
             .header("User-Agent", "OrknuxShell/${Version.VERSION}")
+            // Which running Shell this is: a chat it writes in is claimed for it, so its agent's commands run here
+            // and on no other computer the person has a Shell open on.
+            .header("X-Orknux-Shell", INSTANCE)
         timeout?.let { b.timeout(it) }
         if (token != null) b.header("Authorization", "Bearer $token")
         if (jar.isNotEmpty()) b.header("Cookie", jar.entries.joinToString("; ") { "${it.key}=${it.value}" })

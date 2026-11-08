@@ -78,9 +78,8 @@ class Interactive(
     fun run(): Int {
         val drawable = terminal.type != Terminal.TYPE_DUMB && terminal.type != Terminal.TYPE_DUMB_COLOR
         if (drawable) takeScreen()
-        status = runCatching { Status.getStatus(terminal) }.getOrNull()
-        // Its rows taken now, on the empty screen: taken later, the first draw scrolled the banner away.
-        runCatching { status?.update(List(barRows()) { AttributedString("") }) }
+        // No status bar pinned to the foot: the status line is drawn under the prompt and goes down the window with
+        // it, as in Claude Code - the window starts at the top and fills, rather than empty above a prompt at its foot.
         reader = buildReader()
         region = LiveRegion(
             sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
@@ -89,12 +88,6 @@ class Interactive(
             theme = theme,
             unicode = LiveRegion.unicodeFor(terminal.encoding()?.name()),
         )
-        // The top bar's rows, and the transcript starting under them.
-        if (drawable) {
-            header()
-            terminal.writer().print("\u001b[${HEADER_ROWS + 1};1H")
-            terminal.writer().flush()
-        }
         terminal.handle(Terminal.Signal.INT) { if (phase == Phase.TURN) interruptTurn() }
         terminal.handle(Terminal.Signal.WINCH) {
             if (region.active) region.redraw() else {
@@ -114,7 +107,6 @@ class Interactive(
         }
         policy.problems.forEach { say(theme.warning("Rule skipped: $it")) }
         theme.unknown.forEach { say(theme.warning("Theme entry ignored: $it")) }
-        if (drawable) toFoot()
 
         device = DeviceLoop(api.client, handler, deviceReport())
         device.start()
@@ -126,8 +118,6 @@ class Interactive(
             device.stop()
             runCatching { status?.update(emptyList()) }
             runCatching { status?.close() }
-            // The whole window scrolls again, as it did before: the top bar's margin given back.
-            if (drawable) runCatching { terminal.writer().print("\u001b7\u001b[r\u001b8"); terminal.writer().flush() }
             runCatching { reader.history.save() }
         }
         return 0
@@ -194,7 +184,7 @@ class Interactive(
         }
         val historyFile = store.path.resolveSibling("orknux-shell.history")
         // What LineReaderBuilder.build() does, on a reader that can take its completion list away again.
-        val r = ShellLineReader(terminal) { footer() }.apply {
+        val r = ShellLineReader(terminal, { footer() }, ::underPrompt).apply {
             setHistory(org.jline.reader.impl.history.DefaultHistory())
             setParser(parser)
             setCompleter(completer())
@@ -221,7 +211,7 @@ class Interactive(
             option(LineReader.Option.INSERT_BRACKET, false)
             option(LineReader.Option.AUTO_FRESH_LINE, true)
             option(LineReader.Option.CASE_INSENSITIVE, true)
-            option(LineReader.Option.AUTO_MENU_LIST, true)
+            option(LineReader.Option.AUTO_MENU_LIST, false)
         }
         /*
          * The commands are listed as a / is typed, and narrowed with every key
@@ -229,16 +219,27 @@ class Interactive(
          * what shows them. Only while the line is one word starting with /,
          * and the cursor at its end; past that, Tab completes as before.
          */
+        /*
+         * The commands under a / as it is typed, drawn by the Shell in the place
+         * under the prompt the status line is drawn in, and moved through with the
+         * keys here: Up and Down move the highlight, Tab completes it, Enter runs
+         * it, Esc closes the list. JLine's own completion list padded itself to
+         * the height of the window, which scrolled the conversation away now
+         * that the prompt follows the text down. Tab elsewhere completes as before.
+         */
         for (name in listOf(LineReader.SELF_INSERT, LineReader.BACKWARD_DELETE_CHAR)) {
             val plain = r.widgets[name] ?: continue
             r.widgets[name] = org.jline.reader.Widget {
                 val done = plain.apply()
-                val typed = r.buffer.toString()
-                if (r.buffer.cursor() == typed.length && Regex("""/[^\s/]*""").matches(typed)) autoList(r, typed) else closeList(r)
+                slashAt = 0
+                if (slashDismissed != r.buffer.toString()) slashDismissed = null
                 done
             }
         }
-        r.widgets["orknux-close-list"] = org.jline.reader.Widget { closeList(r); true }
+        r.widgets["orknux-close-list"] = org.jline.reader.Widget {
+            if (slashChoices(r).isNotEmpty()) slashDismissed = r.buffer.toString()
+            true
+        }
         r.widgets["orknux-cycle-mode"] = org.jline.reader.Widget { cycleMode(); true }
         r.widgets["orknux-newline"] = org.jline.reader.Widget { r.buffer.write("\n"); true }
         r.widgets["orknux-thinking"] = org.jline.reader.Widget { showThinking(); true }
@@ -247,24 +248,34 @@ class Interactive(
         keys.bind(Reference("orknux-thinking"), KeyMap.ctrl('O'))
         keys.bind(Reference("orknux-close-list"), KeyMap.esc())
         listOf("\u001b\r", "\u001b\n", "\u001b[13;2u", "\u001b[27;2;13~").forEach { keys.bind(Reference("orknux-newline"), it) }
-        keys.bind(Reference(LineReader.ACCEPT_LINE), KeyMap.ctrl('M'))
-        /*
-         * Down and Up go into the list while it is open: the list drawn as one
-         * types only shows the choices, and it is JLine's menu that moves through
-         * them - so the first arrow starts the menu on the first (or last)
-         * choice, and the menu's own keys take it from there: the arrows, Enter
-         * to take one, Esc to leave. With no list open they are history, as before.
-         */
-        for ((sequence, menu) in listOf(
-            "\u001b[B" to LineReader.MENU_COMPLETE, "\u001bOB" to LineReader.MENU_COMPLETE,
-            "\u001b[A" to LineReader.REVERSE_MENU_COMPLETE, "\u001bOA" to LineReader.REVERSE_MENU_COMPLETE,
-        )) {
+        // Enter runs the highlighted command while the list is open, and the line as typed otherwise.
+        r.widgets["orknux-accept"] = org.jline.reader.Widget {
+            slashChoices(r).getOrNull(slashAt)?.let { chosen -> r.buffer.clear(); r.buffer.write(chosen.value.trimEnd()) }
+            r.callWidget(LineReader.ACCEPT_LINE)
+            true
+        }
+        keys.bind(Reference("orknux-accept"), KeyMap.ctrl('M'))
+        val tabBefore = keys.getBound("\t")
+        r.widgets["orknux-tab"] = org.jline.reader.Widget {
+            val chosen = slashChoices(r).getOrNull(slashAt)
+            if (chosen != null) {
+                r.buffer.clear()
+                r.buffer.write(chosen.value.trimEnd() + " ")
+                slashAt = 0
+            } else when (tabBefore) {
+                is Reference -> r.callWidget(tabBefore.name())
+                is org.jline.reader.Widget -> tabBefore.apply()
+            }
+            true
+        }
+        keys.bind(Reference("orknux-tab"), "\t")
+        for ((sequence, step) in listOf("\u001b[B" to 1, "\u001bOB" to 1, "\u001b[A" to -1, "\u001bOA" to -1)) {
             val before = keys.getBound(sequence)
             val name = "orknux-arrow-" + sequence.drop(1)
             r.widgets[name] = org.jline.reader.Widget {
-                if (pushedUp > 0) {
-                    r.callWidget(menu)
-                    closeList(r)
+                val shown = slashChoices(r)
+                if (shown.isNotEmpty()) {
+                    slashAt = (slashAt + step).mod(shown.size)
                 } else {
                     when (before) {
                         is Reference -> r.callWidget(before.name())
@@ -278,52 +289,45 @@ class Interactive(
         return r
     }
 
-    /** How many rows a list under the prompt pushed the screen up; given back when it goes. */
-    private var pushedUp = 0
+    /** Which of the listed commands is highlighted. */
+    @Volatile private var slashAt = 0
 
-    /** Takes the list away, and the screen back down so the prompt is directly above the status bar again. */
-    private fun closeList(r: LineReader) {
-        if (pushedUp == 0) return
-        (r as? ShellLineReader)?.dropList()
-        r.callWidget(LineReader.REDISPLAY)
-        pullDown(pushedUp)
-        pushedUp = 0
-    }
-
-    /**
-     * Moves the scrolling area's text down [rows] rows and the cursor with it:
-     * what a list, or an empty line entered, pushed up comes back, and the
-     * prompt is on the last row above the bar. Blank rows come in at the top.
-     */
-    private fun pullDown(rows: Int) {
-        if (rows <= 0 || !region.ansi) return
-        terminal.writer().print("\u001b[${rows}T\u001b[${rows}B")
-        terminal.writer().flush()
-    }
+    /** The line the list was closed on with Esc: it stays closed until the line changes. */
+    @Volatile private var slashDismissed: String? = null
 
     /** True while the list is drawn as one types, rather than on Tab. */
     @Volatile private var listingAsTyped = false
 
     /**
-     * The list under a / as it is typed - only where it fits on the screen,
-     * since a list that does not fit asks "do you wish to see all" and takes
-     * the next key as the answer. A / alone lists the Shell's own commands;
-     * a letter after it narrows to commands and skills alike.
+     * What the list under a / shows now: while the line is one word starting
+     * with /, the cursor at its end, and the list not closed with Esc. A / alone
+     * lists the Shell's own commands; a letter after it narrows to commands and
+     * skills alike.
      */
-    private fun autoList(r: LineReader, typed: String) {
+    private fun slashChoices(r: LineReader): List<Completion> {
+        val typed = r.buffer.toString()
+        if (r.buffer.cursor() != typed.length || !Regex("""/[^\s/]*""").matches(typed) || typed == slashDismissed) return emptyList()
         listingAsTyped = true
-        try {
-            val count = completions.complete(typed).size
-            if (count in 1..(terminal.height - 8).coerceAtLeast(5)) {
-                r.callWidget(LineReader.LIST_CHOICES)
-                // The prompt sits on the last row, so a list under it pushed the screen up by its own height.
-                pushedUp = maxOf(pushedUp, count)
-            } else {
-                closeList(r)
-            }
+        return try {
+            completions.complete(typed)
         } finally {
             listingAsTyped = false
         }
+    }
+
+    /** The list's rows: a window of [SLASH_ROWS] around the highlight, the highlighted one marked. */
+    private fun slashRows(): List<String> {
+        if (!::reader.isInitialized) return emptyList()
+        val shown = slashChoices(reader)
+        if (shown.isEmpty()) return emptyList()
+        slashAt = slashAt.coerceIn(0, shown.lastIndex)
+        val top = (slashAt - SLASH_ROWS / 2).coerceIn(0, (shown.size - SLASH_ROWS).coerceAtLeast(0))
+        val wide = shown.subList(top, minOf(shown.size, top + SLASH_ROWS)).maxOf { it.value.trimEnd().length } + 2
+        return shown.subList(top, minOf(shown.size, top + SLASH_ROWS)).mapIndexed { i, c ->
+            val at = top + i == slashAt
+            val name = c.value.trimEnd().padEnd(wide)
+            (if (at) theme.accent("› ") + theme.bold(theme.accent(name)) else "  " + theme.text(name)) + theme.muted(c.description ?: "")
+        } + listOfNotNull(if (shown.size > SLASH_ROWS) theme.muted("  ${slashAt + 1} of ${shown.size} · ↑↓ · Tab completes · Enter runs · Esc closes") else theme.muted("  ↑↓ · Tab completes · Enter runs · Esc closes"))
     }
 
     private val completions: Completions by lazy {
@@ -417,25 +421,32 @@ class Interactive(
             } finally {
                 phase = Phase.OTHER
             }
-            // Entered with a list under it: the list is gone and the line moved on by one, as at the foot it would have.
-            if (pushedUp > 0) {
-                pullDown(pushedUp - 1)
-                pushedUp = 0
-            }
             val text = line.replace("\\\n", "\n").trim()
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
             if (text.isNotEmpty()) lastBlank = false
             if (text.isEmpty()) {
-                // An empty Enter leaves no bare prompt behind: its row is cleared and the screen comes back down.
+                // An empty Enter leaves no bare prompt behind: its row is cleared, and the next prompt is drawn on it.
                 if (region.ansi) {
                     terminal.writer().print("\u001b[1A\u001b[2K")
-                    pullDown(1)
+                    terminal.writer().flush()
                 }
                 continue
             }
             try {
                 if (!said(text)) return
+                // What was written while that turn ran, sent now, each as if typed at the prompt.
+                while (queued.isNotEmpty()) {
+                    val next = queued.removeAt(0)
+                    say(prompt() + next)
+                    lastBlank = false
+                    if (!said(next)) return
+                }
+                // And a line begun and not sent waits in the next prompt.
+                if (ahead.isNotEmpty()) {
+                    prefill = ahead.toString()
+                    ahead.setLength(0)
+                }
             } catch (refused: OrknuxException) {
                 say(theme.danger(refused.message ?: "Refused."))
                 say("")
@@ -554,7 +565,7 @@ class Interactive(
             var n = 0
             while (phase == Phase.TURN) {
                 region.tick()
-                if (++n % 10 == 0 && status != null) footer()
+                if (++n % 10 == 0) footer()
                 try { Thread.sleep(100) } catch (_: InterruptedException) { break }
             }
         }
@@ -582,7 +593,7 @@ class Interactive(
         if (chatBefore == null && api.startedWithoutOrigin) {
             say(theme.warning("This server does not know chats opened in Orknux Shell yet, so its agent cannot run commands here."))
         }
-        if (status == null) say(theme.muted(statusText()))
+        if (!region.ansi) say(theme.muted(statusText()))
         // A blank line between an answer and the next prompt.
         say("")
         if (into === conversation) checkGoal()
@@ -677,7 +688,6 @@ class Interactive(
         } finally {
             terminal.attributes = saved
         }
-        pullDown(picker.lastHeight - 1)
         return chosen
     }
 
@@ -734,9 +744,30 @@ class Interactive(
         footer()
     }
 
+    private fun rule(): String =
+        theme.muted((if (LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
+
+    /** Under the prompt while a line is read: a rule, the files waiting to go, and the status line. */
+    private fun underPrompt(): List<String> =
+        if (!::conversation.isInitialized || !region.ansi) emptyList()
+        else (slashRows() + listOfNotNull("", rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())).map { LiveRegion.clip(it, width() - 1) }
+
     /** What sits under the spinner: the files waiting to go, and the status line. */
-    private fun below(): List<String> =
-        if (status != null) emptyList() else listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText())
+    /** What is being typed while a turn runs. */
+    private val ahead = StringBuilder()
+
+    /** Messages written while a turn ran, sent one after another when it ends. */
+    private val queued = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    /** Under the spinner: what is queued, the line being typed, and the status line. */
+    private fun below(): List<String> {
+        val typing = buildList {
+            queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
+            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
+        }
+        if (status != null) return typing
+        return listOf("") + typing + listOfNotNull(rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())
+    }
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
     private fun interruptTurn() {
@@ -773,6 +804,22 @@ class Interactive(
                         region.thinking(if (thinkingShown || config.thinking == "expanded") liveThinking else null)
                     }
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
+                    // Typed while the agent works: kept under the spinner, and Enter queues it for when the turn ends.
+                    13, 10 -> {
+                        val typed = ahead.toString().trim()
+                        if (typed.isNotEmpty()) queued += typed
+                        ahead.setLength(0)
+                        region.redraw()
+                    }
+                    127, 8 -> {
+                        if (ahead.isNotEmpty()) ahead.setLength(ahead.length - 1)
+                        region.redraw()
+                    }
+                    21 -> { ahead.setLength(0); region.redraw() }
+                    else -> if (c >= 32) {
+                        ahead.append(c.toChar())
+                        region.redraw()
+                    }
                 }
             }
         } catch (_: java.io.InterruptedIOException) {
@@ -980,8 +1027,9 @@ class Interactive(
             say(theme.dim("  ⎿ ") + theme.danger(why))
         }
 
-        override fun notice(text: String) = say(theme.muted(text))
-        override fun error(text: String) = say(theme.warning(text))
+        // Said between other things, so a blank line on either side.
+        override fun notice(text: String) { say(""); say(theme.muted(text)); say("") }
+        override fun error(text: String) { say(""); say(theme.warning(text)); say("") }
     }
 
     // ---- the screen --------------------------------------------------------------------------
@@ -1031,10 +1079,12 @@ class Interactive(
 
     /** The status line under the editor, with the files waiting to go; while a turn runs, the region draws it instead. */
     private fun footer() {
+        header()
         if (::region.isInitialized && region.active && status == null) {
             region.redraw()
             return
         }
+        // Under the prompt the line editor draws it itself, fresh at every redraw (ShellLineReader).
         val st = status ?: return
         // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
         val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
@@ -1057,26 +1107,23 @@ class Interactive(
     private fun statusText(): String = statusParts().let { (left, right) -> oneRow(left, right) }
 
     /**
-     * The bar at the top of the window: the workspace, and the server it is
-     * on, over a rule - kept there with a scrolling area that starts under it,
-     * as the status bar is kept at the foot with one that ends above it.
-     * Drawn with the cursor saved and put back, so nothing being typed moves.
+     * The workspace in the window's title - "Orknux · Private" - which the
+     * terminal shows above everything, on its tab and its title bar. Not a row
+     * pinned at the top of the screen: that takes a scrolling area which starts
+     * below the first row, and a terminal throws away the lines scrolled out of
+     * one rather than keeping them in its scrollback, so the conversation could
+     * no longer be scrolled back through.
      */
-    private fun header(footRows: Int = barRows()) {
+    private fun header(@Suppress("UNUSED_PARAMETER") footRows: Int = 0) {
         if (!::region.isInitialized || !region.ansi) return
-        val rows = terminal.height.takeIf { it > 0 } ?: return
-        val left = " " + theme.muted("workspace ") + theme.text(conversationOrNull()?.workspace?.name ?: config.workspace ?: "")
-        val right = theme.muted(api.client.server.removePrefix("https://").removePrefix("http://"))
-        val gap = width() - 2 - visibleLength(left) - visibleLength(right)
-        val line = if (gap >= 2) left + " ".repeat(gap) + right else left
-        val rule = theme.muted((if (LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
-        val bottom = (rows - footRows).coerceAtLeast(HEADER_ROWS + 1)
-        terminal.writer().print(
-            "\u001b7\u001b[${HEADER_ROWS + 1};${bottom}r" +
-                "\u001b[1;1H\u001b[2K" + LiveRegion.clip(line, width() - 1) + "\u001b[2;1H\u001b[2K" + rule + "\u001b8",
-        )
+        val name = conversationOrNull()?.workspace?.name ?: config.workspace ?: return
+        if (name == titled) return
+        titled = name
+        terminal.writer().print("\u001b]0;Orknux · ${name.replace(Regex("[\\u0000-\\u001f\\u007f]"), "")}\u0007")
         terminal.writer().flush()
     }
+
+    @Volatile private var titled: String? = null
 
     private fun conversationOrNull(): Conversation? = if (::conversation.isInitialized) conversation else null
 
@@ -1310,6 +1357,7 @@ class Interactive(
         lastTurn = null
         lastThinking = thoughts.takeLast(1)
         remember()
+        say("")
         say(theme.muted("Continuing ") + theme.text(chosen.title))
     }
 
@@ -1319,6 +1367,8 @@ class Interactive(
         val thoughts = mutableListOf<ThinkingBlock>()
         val foldAs = if (config.thinking == "expanded") "collapsed" else config.thinking
         messages.forEach { m ->
+            // Each piece with room around it, as a turn is drawn live; say() never makes it two blank lines.
+            say("")
             when (m.role.lowercase()) {
                 "user" -> say(theme.accent("› ") + theme.text(m.content))
                 "assistant" -> {
@@ -1327,6 +1377,7 @@ class Interactive(
                         thoughts += block
                         TurnRenderer.fold(block, foldAs, theme, width()).forEach(::say)
                     }
+                    say("")
                     markdown.render(m.content).removeSuffix("\n").split('\n').forEach(::say)
                 }
                 "thought" -> {
@@ -1334,7 +1385,8 @@ class Interactive(
                     thoughts += block
                     TurnRenderer.fold(block, foldAs, theme, width()).forEach(::say)
                 }
-                "tool" -> say(theme.muted("● " + TurnRenderer.clip(TurnRenderer.oneLine(m.content), width() - 4)))
+                "tool" -> m.content.trim().takeIf { it.isNotEmpty() && it != "{}" }
+                    ?.let { say(theme.muted("● " + TurnRenderer.clip(TurnRenderer.oneLine(it), width() - 4))) }
                 else -> say(theme.muted(TurnRenderer.clip(TurnRenderer.oneLine(m.content), width())))
             }
         }
@@ -1561,7 +1613,7 @@ class Interactive(
                 var n = 0
                 while (phase == Phase.TURN) {
                     region.tick()
-                    if (++n % 10 == 0 && status != null) footer()
+                    if (++n % 10 == 0) footer()
                     try { Thread.sleep(100) } catch (_: InterruptedException) { break }
                 }
             }
@@ -1658,7 +1710,6 @@ class Interactive(
             terminal.attributes = saved
         }
         // The list pushed the screen up while it was open; the rows come back, the prompt above the bar.
-        pullDown(picker.lastHeight - 1)
         return chosen?.let { items[it] }
     }
 
@@ -1769,8 +1820,9 @@ class Interactive(
         /** How long the command door may take to open at the start before the bar says it is not open. */
         const val DEVICE_GRACE_MILLIS = 15_000L
 
-        /** The rows of the bar at the top of the window: the workspace, and a rule under it. */
-        const val HEADER_ROWS = 2
+        /** How many commands the list under a / shows at once. */
+        const val SLASH_ROWS = 8
+
 
         /** How much of the thinking the live block shows: its last lines, as the web chat's does. */
         const val THINKING_LINES = 5
@@ -1784,9 +1836,44 @@ class Interactive(
 }
 
 /** The line reader, able to take back the list a completion left under the line - JLine keeps it until the line is done. */
-class ShellLineReader(terminal: Terminal, private val resized: () -> Unit = {}) : org.jline.reader.impl.LineReaderImpl(terminal, "Orknux Shell", HashMap()) {
+class ShellLineReader(
+    terminal: Terminal,
+    private val resized: () -> Unit = {},
+    /** What is drawn under the line being typed - the status line - in the place a completion list is drawn. */
+    private val under: () -> List<String> = { emptyList() },
+) : org.jline.reader.impl.LineReaderImpl(terminal, "Orknux Shell", HashMap()) {
+    private var cleaning = false
+
     fun dropList() {
         post = null
+    }
+
+    /**
+     * The status line under the prompt, given as the lines the reader draws below
+     * what is typed: they move down the window with the prompt, a completion list
+     * takes their place while it is open, and they are drawn fresh every time.
+     */
+    override fun redisplay(flush: Boolean) {
+        // Ours, drawn again from what is true now at every redisplay; a list JLine put there itself (Tab) is left be.
+        if ((post == null || post === ours) && !cleaning) {
+            val lines = under()
+            drawn = lines
+            post = if (lines.isEmpty()) null else ours
+        }
+        super.redisplay(flush)
+    }
+
+    private var drawn: List<String> = emptyList()
+    private val ours = java.util.function.Supplier { org.jline.utils.AttributedString.fromAnsi(drawn.joinToString("\n")) }
+
+    /** A line taken: drawn once more with nothing under it, so the status line is not left behind in the transcript. */
+    override fun cleanup() {
+        cleaning = true
+        try {
+            super.cleanup()
+        } finally {
+            cleaning = false
+        }
     }
 
     /**

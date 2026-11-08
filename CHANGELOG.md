@@ -6,17 +6,33 @@ refuses a tag with no section here.
 
 ## Unreleased
 
+### Added
+
+- Write while the agent works: what you type shows under the spinner, Enter
+  queues it, and queued messages are sent one after another when the turn
+  ends. A line begun and not sent waits in the next prompt.
+- The command list under `/` is drawn by the Shell: Up and Down move through
+  it, Tab completes, Enter runs the highlighted command, Esc closes it.
+
 ### Changed
 
-- The workspace is in a bar of its own at the top of the window, with the
-  server beside it and a rule under it; the status bar at the foot is one row.
-- The status bar no longer says commands can run here, which is so whenever
+- The conversation starts at the top of the window, and the prompt with the
+  status line under it follows it down, as in Claude Code; the window is not
+  empty above a prompt at its foot any more.
+- The workspace is in the window's title, "Orknux · Private", and at the right
+  of the status line.
+- Each Shell says which it is, so its chats' commands run on its computer and
+  not on another one of yours with a Shell open (with a server that knows).
+- The command link stays quiet through a short outage, such as a server
+  restart, and says when the server answers again.
+- `/resume` shows the chat with room between its messages.
+- The status line no longer says commands can run here, which is so whenever
   the Shell is open; it says when they cannot.
 
 ### Fixed
 
-- Resizing the window redraws both bars at the new width: while a line was
-  being read the line editor held the resize signal, and they kept the old one.
+- Resizing the window redraws the status line at the new width: while a line
+  was being read the line editor held the resize signal, and it kept the old one.
 
 ## 1.0.5
 

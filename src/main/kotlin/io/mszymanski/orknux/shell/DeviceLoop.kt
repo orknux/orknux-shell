@@ -62,21 +62,31 @@ class DeviceLoop(
     private fun loop() {
         var saidMissing = false
         var saidUnreachable = false
+        // Since when the server has not answered: a restart takes a few seconds, which is not news.
+        var downSince = 0L
         while (running.get()) {
+            // A poll on its way and not failed is a door that is open: one with nothing to do waits half a minute
+            // for an answer, and the Shell would say the door was down for all of that.
+            if (downSince == 0L) connected = true
             val reply = try {
                 client.get(
-                    "$PATH/next?wait=$waitSeconds&client=$CLIENT&version=${OrknuxClient.encode(Version.VERSION)}",
+                    "$PATH/next?wait=$waitSeconds&client=$CLIENT&version=${OrknuxClient.encode(Version.VERSION)}&instance=$INSTANCE",
                     Duration.ofSeconds(waitSeconds + 20L),
                 )
             } catch (failure: OrknuxException) {
                 connected = false
                 if (!running.get()) return
-                if (!saidUnreachable) report.error("Local commands: ${failure.message}. Trying again.")
-                saidUnreachable = true
+                if (downSince == 0L) downSince = System.currentTimeMillis()
+                if (!saidUnreachable && System.currentTimeMillis() - downSince >= QUIET_OUTAGE_MILLIS) {
+                    report.error("Local commands: ${failure.message}. Trying again.")
+                    saidUnreachable = true
+                }
                 pause(retryMillis)
                 continue
             }
+            if (saidUnreachable) report.notice("Local commands: the server answers again.")
             saidUnreachable = false
+            downSince = 0L
             when {
                 reply.status == 204 -> connected = true
                 reply.status == 200 -> {
@@ -134,6 +144,8 @@ class DeviceLoop(
     companion object {
         const val PATH = "/api/terminal"
         const val CLIENT = "Shell"
+        /** How long the server may not answer before it is said: a restart is a few seconds. */
+        const val QUIET_OUTAGE_MILLIS = 20_000L
     }
 }
 
