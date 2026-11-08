@@ -79,6 +79,9 @@ class LiveRegion(
 
     fun pause() = synchronized(lock) { paused = true }
 
+    /** The screen was cleared under it: nothing of it is on it any more, so nothing is erased before it is drawn again. */
+    fun forget() = synchronized(lock) { drawnRows = 0 }
+
     /** Back on the conversation's screen: what came meanwhile is written, and the region drawn again. */
     fun resume() = synchronized(lock) {
         paused = false

@@ -90,12 +90,9 @@ class Interactive(
             unicode = LiveRegion.unicodeFor(terminal.encoding()?.name()),
         )
         terminal.handle(Terminal.Signal.INT) { if (phase == Phase.TURN) interruptTurn() }
-        terminal.handle(Terminal.Signal.WINCH) {
-            if (region.active) region.redraw() else {
-                runCatching { status?.resize() }
-                footer()
-            }
-        }
+        // The window resized: the terminal has rewrapped what it had, and the bar's rows and the scrolling area no
+        // longer agree with it, so all of it is written again at the new size.
+        terminal.handle(Terminal.Signal.WINCH) { repaint() }
 
         val policy = CommandPolicy(config.commands)
         handler = CommandHandler(policy, CommandRunner(config.shell), ::approve, deviceReport(), { (active ?: conversation).mode }, ::keepRule)
@@ -186,7 +183,7 @@ class Interactive(
         }
         val historyFile = store.path.resolveSibling("orknux-shell.history")
         // What LineReaderBuilder.build() does, on a reader that can take its completion list away again.
-        val r = ShellLineReader(terminal, { footer() }, ::underPrompt, ::pullDown).apply {
+        val r = ShellLineReader(terminal, { repaint() }, ::underPrompt, ::pullDown).apply {
             setHistory(org.jline.reader.impl.history.DefaultHistory())
             setParser(parser)
             setCompleter(completer())
@@ -244,7 +241,7 @@ class Interactive(
         }
         r.widgets["orknux-cycle-mode"] = org.jline.reader.Widget { cycleMode(); true }
         r.widgets["orknux-newline"] = org.jline.reader.Widget { r.buffer.write("\n"); true }
-        r.widgets["orknux-thinking"] = org.jline.reader.Widget { showThinking(); true }
+        r.widgets["orknux-thinking"] = org.jline.reader.Widget { toggleDetails(); true }
         val keys = r.keyMaps[LineReader.MAIN]!!
         keys.bind(Reference("orknux-cycle-mode"), "\u001b[Z")
         keys.bind(Reference("orknux-thinking"), KeyMap.ctrl('O'))
@@ -425,6 +422,7 @@ class Interactive(
                 phase = Phase.OTHER
             }
             val text = line.replace("\\\n", "\n").trim()
+            if (text.isNotEmpty()) text.split('\n').forEachIndexed { i, l -> transcript.add((if (i == 0) prompt() else "  ") + l) }
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
             if (text.isNotEmpty()) lastBlank = false
@@ -537,6 +535,7 @@ class Interactive(
     private fun turn(text: String, into: Conversation = conversation) {
         val output = object : TurnOutput {
             override fun line(text: String) = say(text)
+            override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) = region.phase(key, text)
             override fun thinking(text: String?) {
                 if (text != null && liveThinking == null) thinkingSince = System.currentTimeMillis()
@@ -544,11 +543,11 @@ class Interactive(
                 // Kept for Ctrl+O, but drawn live only when asked for: by default the spinner says "Thinking"
                 // and the text is read afterwards, from the "Thought for" line, as in Claude Code.
                 region.thinkingHint = detailsHint()
-                region.thinking(if (config.thinking == "expanded" || thinkingShown) (text ?: if (thinkingShown) "" else null) else null)
+                region.thinking(if (unfolded) text else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
-        val renderer = TurnRenderer(theme, output, config.thinking, links)
+        val renderer = TurnRenderer(theme, output, if (config.thinking == "hidden") "hidden" else "collapsed", links)
         val sending = if (into === conversation) attachments.toList() else emptyList()
         // A blank line between what was asked and what comes back.
         say("")
@@ -560,7 +559,6 @@ class Interactive(
         val raw = terminal.attributes
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
         terminal.attributes = raw
-        thinkingShown = false
         region.thinkingHint = detailsHint()
         region.phase("thinking", theme.thinking("Thinking"))
         region.start { below() }
@@ -707,21 +705,21 @@ class Interactive(
     private fun followWake(chatId: String, into: Conversation) {
         val output = object : TurnOutput {
             override fun line(text: String) = say(text)
+            override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) = region.phase(key, text)
             override fun thinking(text: String?) {
                 if (text != null && liveThinking == null) thinkingSince = System.currentTimeMillis()
                 liveThinking = text
                 region.thinkingHint = detailsHint()
-                region.thinking(if (config.thinking == "expanded" || thinkingShown) (text ?: if (thinkingShown) "" else null) else null)
+                region.thinking(if (unfolded) text else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
-        val renderer = TurnRenderer(theme, output, config.thinking, links)
+        val renderer = TurnRenderer(theme, output, if (config.thinking == "hidden") "hidden" else "collapsed", links)
         // The same keys as a turn sent from here - Ctrl+C or Esc interrupts, Ctrl+O shows the thinking, typing queues -
         // and Ctrl+C a key rather than a signal: as a signal it reached a handler that knew only turns sent from here.
         active = into
         lastTurn = renderer
-        thinkingShown = false
         phase = Phase.TURN
         val saved = terminal.enterRawMode()
         val raw = terminal.attributes
@@ -858,7 +856,7 @@ class Interactive(
                 if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
                 when (c) {
                     3 -> interruptTurn()
-                    15 -> showTurnPage(input)
+                    15 -> toggleDetails()
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
                     // Typed while the agent works: kept under the spinner, and Enter queues it for when the turn ends.
                     13, 10 -> {
@@ -890,43 +888,8 @@ class Interactive(
     }
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
-    /**
-     * Ctrl+O while a turn runs: the turn so far, in full - each thought, each
-     * tool call with all it was given and answered, and the thinking as it
-     * streams - on a page of its own that follows the turn as it goes. Ctrl+O,
-     * Esc or q closes it, the conversation as it was and what came meanwhile
-     * written under it; Ctrl+C closes it and interrupts the turn.
-     */
-    private fun showTurnPage(input: org.jline.utils.NonBlockingReader) {
-        region.pause()
-        val page = ThinkingPage(
-            { turnSoFar() }, theme, { terminal.height.takeIf { it > 0 } ?: 24 }, ::width,
-            sink = { terminal.writer().print(it); terminal.writer().flush() },
-            key = { timeout -> input.read(if (timeout < 0) 0L else timeout) },
-            live = true, title = "This turn so far, in full",
-        )
-        try {
-            page.show()
-        } finally {
-            region.resume()
-        }
-        if (page.interrupted) interruptTurn()
-    }
-
-    private fun turnSoFar(): List<String> {
-        val done = lastTurn?.details?.toList().orEmpty()
-        val now = liveThinking?.takeIf { it.isNotBlank() }?.let { TurnRenderer.fold(ThinkingBlock(it, System.currentTimeMillis() - thinkingSince), "expanded", theme, width()) }.orEmpty()
-        return (TurnRenderer.detailLines(done, theme, width()) + now).ifEmpty { listOf(theme.muted("Nothing yet: the model has not thought aloud or called a tool in this turn.")) }
-    }
-
     /** What Ctrl+O does now, said on the spinner's line. */
-    private fun detailsHint(): String = "Ctrl+O this turn in full"
-
-    /**
-     * Whether this turn shows its details: the thinking live, and each tool call
-     * in full rather than on one line. Ctrl+O while it runs turns it on and off.
-     */
-    @Volatile private var thinkingShown = false
+    private fun detailsHint(): String = if (unfolded) "Ctrl+O fold" else "Ctrl+O expand"
 
     /**
      * The last turn's thinking, read in a page of its own on the terminal's
@@ -1130,12 +1093,14 @@ class Interactive(
      * is holding the keyboard. Written as it is - an OSC 8 link included, which
      * the line editor's own styling would strip.
      */
-    private fun say(text: String) {
+    private fun say(text: String, view: View = View.BOTH) {
         // A line is one row: text with newlines in it is its lines, each said, or the rows under it go uncounted.
         if ('\n' in text) {
-            text.removeSuffix("\n").split('\n').forEach { say(it.removeSuffix("\r")) }
+            text.removeSuffix("\n").split('\n').forEach { say(it.removeSuffix("\r"), view) }
             return
         }
+        transcript.add(text, view)
+        if (!Transcript.shown(view, unfolded)) return
         // One blank line between things, never two: the renderer spaces its own pieces, and a notice said in the
         // middle of a turn (an interruption, an approval) spaces itself as well.
         val blank = stripAnsi(text).isBlank()
@@ -1156,6 +1121,73 @@ class Interactive(
     }
 
     @Volatile private var lastBlank = true
+
+    /** Every line said, for writing the screen again: on Ctrl+O, and when the window changes size. */
+    private val transcript = Transcript()
+
+    /** Whether thoughts and tool calls are shown in full rather than folded. Ctrl+O switches it, at any time. */
+    @Volatile private var unfolded = config.thinking == "expanded"
+
+    /** A piece of work, kept both ways; the screen shows the one [unfolded] chooses. */
+    private fun sayEither(folded: List<String>, full: List<String>) {
+        folded.forEach { say(it, View.FOLDED) }
+        full.forEach { say(it, View.FULL) }
+    }
+
+    /**
+     * Ctrl+O: thoughts and tool calls in full, or folded again - everything
+     * already on the screen as well as what comes next, at the prompt or while
+     * a turn runs. Written lines cannot be changed in place, so the screen is
+     * written again from the transcript, as it is when the window is resized.
+     */
+    private fun toggleDetails() {
+        unfolded = !unfolded
+        if (::region.isInitialized) {
+            region.thinkingHint = detailsHint()
+            region.thinking(if (unfolded) liveThinking else null)
+        }
+        repaint()
+    }
+
+    /**
+     * The window written again from the transcript: cleared, its scrollback
+     * with it - or the old view would be left above the new - the lines in the
+     * view chosen, at the window's size now, the status bar pinned again, and
+     * the live block or the prompt under the last line, at the foot.
+     */
+    private fun repaint() {
+        if (!::region.isInitialized || !region.ansi) return
+        val rows = terminal.height.takeIf { it > 0 } ?: return
+        val lines = transcript.lines(unfolded)
+        val draw = {
+            val w = terminal.writer()
+            w.print(LiveRegion.SYNC_START + "\u001b[r\u001b[H\u001b[2J\u001b[3J")
+            w.flush()
+            runCatching {
+                status?.resize()
+                status?.reset()
+            }
+            // The bar first, on the empty screen: a reset bar makes room for itself by moving the cursor up as many
+            // rows as it has, which after the text put the prompt that many rows into it.
+            footer()
+            w.print("\u001b[H")
+            lines.forEach { w.print(it + "\r\n") }
+            region.forget()
+            w.flush()
+        }
+        synchronized(out) { if (region.active) region.exclusive(draw) else draw() }
+        // Where the text ends is worked out rather than asked of the terminal, whose answer the line editor, reading
+        // the keys meanwhile, would take as typing.
+        val room = rows - barRows()
+        val below = if (region.active) region.lines().size.coerceAtLeast(1) else 1
+        // A line wider than the window takes as many rows as it wraps to - the banner's at a narrow width.
+        val w = width()
+        val used = lines.sumOf { ((visibleLength(it) - 1) / w + 1).coerceAtLeast(1) }
+        if (used + below < room) pullDown(room - used - below)
+        if (region.active) region.redraw() else if (::reader.isInitialized && phase == Phase.READING) runCatching { (reader as? ShellLineReader)?.redrawPrompt() }
+        terminal.writer().print(LiveRegion.SYNC_END)
+        terminal.writer().flush()
+    }
 
     private val startedAt = System.currentTimeMillis()
 
@@ -1746,6 +1778,7 @@ class Interactive(
     private fun follow(chatId: String) {
         val output = object : TurnOutput {
             override fun line(text: String) = say(text)
+            override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) {
                 val g = goal
                 if (region.active && g != null) region.phase("goal:$key", "Goal · iteration ${g.iteration + 1} of ${g.maxIterations ?: "∞"} · " + stripAnsi(text).lowercase())
@@ -1753,7 +1786,7 @@ class Interactive(
             override fun width(): Int = this@Interactive.width()
         }
         while (goal?.running == true) {
-            val renderer = TurnRenderer(theme, output, config.thinking, links)
+            val renderer = TurnRenderer(theme, output, if (config.thinking == "hidden") "hidden" else "collapsed", links)
             var followed = false
             phase = Phase.TURN
             region.phase("goal", "Goal · iteration ${(goal?.iteration ?: 0) + 1} of ${goal?.maxIterations ?: "∞"} · working")
@@ -2050,6 +2083,13 @@ class ShellLineReader(
      * were drawn at. The reader resizes as it does, and then the bars are
      * drawn again at the new width.
      */
+    /** The prompt and the line drawn again from nothing: the screen under them was cleared. */
+    fun redrawPrompt() {
+        redrawLine()
+        redisplay()
+        flush()
+    }
+
     override fun handleSignal(signal: Terminal.Signal) {
         super.handleSignal(signal)
         if (signal == Terminal.Signal.WINCH) resized()

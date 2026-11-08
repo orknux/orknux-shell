@@ -4,6 +4,23 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.13
+
+### Changed
+
+- Ctrl+O unfolds the conversation in place: every thought written out whole
+  and every tool call with all it was given and answered - the ones already
+  on the screen as well as those to come, at the prompt or while a turn
+  runs - and Ctrl+O again folds it back. The separate page 1.0.12 opened is
+  gone. The screen is written again to do it, so the scrollback holds the
+  view chosen.
+
+### Fixed
+
+- Resizing the window writes the conversation again at the new size, the
+  status bar under it at the new width, rather than leaving the bar and the
+  text where the old size put them.
+
 ## 1.0.12
 
 ### Added

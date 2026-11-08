@@ -169,6 +169,9 @@ interface TurnOutput {
     /** The thinking streaming now, for the live block above the indicator; null once it has ended. */
     fun thinking(text: String?) {}
 
+    /** A piece of work kept two ways - folded and in full - of which the screen shows one. */
+    fun lines(folded: List<String>, full: List<String>) = folded.forEach(::line)
+
     fun width(): Int = 100
 }
 
@@ -234,8 +237,6 @@ class TurnRenderer(
     private val out: TurnOutput,
     private val thinkingMode: String = "collapsed",
     links: Links = Links(false, null),
-    /** Whether each tool call is written out in full - its arguments and all it answered - rather than as one line. */
-    private val detailed: () -> Boolean = { false },
 ) {
     private val markdown = Markdown(theme, { out.width() }, links)
     private val thinking = StringBuilder()
@@ -279,6 +280,15 @@ class TurnRenderer(
     }
 
     private fun work(line: String) = write(Kind.WORK, listOf(line))
+
+    /** Work kept both ways: spaced as any other, and the output decides which it shows. */
+    private fun either(folded: List<String>, full: List<String>) {
+        if (folded.isEmpty() && full.isEmpty()) return
+        // The blank before it belongs to each view that shows something: a thought hidden when folded leaves none.
+        fun spaced(lines: List<String>) = if (lines.isNotEmpty() && lastKind != null) listOf("") + lines else lines
+        out.lines(spaced(folded), spaced(full))
+        if (folded.isNotEmpty()) lastKind = Kind.WORK
+    }
 
     private fun answerLines(rendered: String) {
         if (rendered.isNotEmpty()) write(Kind.ANSWER, rendered.removeSuffix("\n").split('\n'))
@@ -324,8 +334,10 @@ class TurnRenderer(
                 val took = callStarted.remove(event.at)?.let { System.currentTimeMillis() - it }
                 val tool = Detail.Tool(call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took)
                 details += tool
-                if (detailed()) write(Kind.WORK, detailLines(listOf(tool), theme, out.width()).dropLastWhile { it.isEmpty() })
-                else work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
+                either(
+                    listOf(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width())),
+                    detailLines(listOf(tool), theme, out.width()).dropLastWhile { it.isEmpty() },
+                )
                 out.phase("thinking", theme.thinking("Thinking"))
             }
             is ChatEvent.Chunk -> {
@@ -374,7 +386,8 @@ class TurnRenderer(
         val block = ThinkingBlock(text, millis)
         blocks += block
         details += Detail.Thought(block)
-        write(Kind.WORK, fold(block, thinkingMode, theme, out.width()))
+        // Folded as the setting says; in full, whole. Where the setting is "expanded" both are the whole of it.
+        either(fold(block, thinkingMode, theme, out.width()), fold(block, "expanded", theme, out.width()))
     }
 
     companion object {
