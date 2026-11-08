@@ -4,6 +4,24 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.18
+
+### Added
+
+- A command typed while the agent works runs at once where it can - /usage,
+  /sessions, /subagents, /mode, /attach, /open, /thinking, /effort, /rules,
+  /help, /update and the /orkx-web ones - written into the conversation with
+  its answer, the live block set aside meanwhile. One that would start a
+  turn or change the conversation - /clear, /resume, /agent, /review and the
+  like - is still queued for when the turn ends, and the list under a / says
+  which Enter will do.
+
+### Fixed
+
+- The line for typing during a turn stays directly above the status bar when
+  the list of commands closes or a queued message is sent, instead of being
+  left higher with empty rows under it.
+
 ## 1.0.17
 
 ### Added

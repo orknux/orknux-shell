@@ -92,6 +92,7 @@ class Interactive(
             theme = theme,
             unicode = LiveRegion.unicodeFor(terminal.encoding()?.name()),
         )
+        region.anchored = drawable && status != null
         terminal.handle(Terminal.Signal.INT) { if (phase == Phase.TURN) interruptTurn() }
         // The window resized: the terminal has rewrapped what it had, and the bar's rows and the scrolling area no
         // longer agree with it, so all of it is written again at the new size.
@@ -883,7 +884,11 @@ class Interactive(
             queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
             if (queued.isNotEmpty() && region.active) add("")
             if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
-            if (region.active && aheadChoices.isNotEmpty()) addAll(slashRows(aheadChoices, aheadAt.coerceIn(0, aheadChoices.lastIndex), "Enter queues"))
+            if (region.active && aheadChoices.isNotEmpty()) {
+                val at = aheadAt.coerceIn(0, aheadChoices.lastIndex)
+                val runs = SlashCommands.parse(aheadChoices[at].value.trim())?.name in WHILE_WORKING
+                addAll(slashRows(aheadChoices, at, if (runs) "Enter runs now" else "Enter queues it for after this turn"))
+            }
         }
         // A blank line between what is happening and what is being written.
         if (status != null) return listOf("") + typing
@@ -944,6 +949,13 @@ class Interactive(
                     13, 10 -> {
                         aheadChoices.getOrNull(aheadAt)?.let { chosen -> ahead.setLength(0); ahead.append(chosen.value.trimEnd()) }
                         val typed = ahead.toString().trim()
+                        val now = SlashCommands.parse(typed)?.takeIf { it.name in WHILE_WORKING }
+                        if (now != null) {
+                            ahead.setLength(0)
+                            aheadTyped()
+                            runWhileWorking(typed, now)
+                            continue
+                        }
                         if (typed.isNotEmpty()) queued += typed
                         ahead.setLength(0)
                         aheadTyped()
@@ -963,6 +975,28 @@ class Interactive(
         } catch (_: InterruptedException) {
         } catch (failure: Exception) {
             Trace.log("key read failed: $failure")
+        }
+    }
+
+    /**
+     * A command that can run while the agent works - one that neither starts a
+     * turn, nor changes the conversation under it, nor needs the line editor -
+     * run at once, the live block set aside while it writes; the rest are queued.
+     */
+    private fun runWhileWorking(typed: String, slash: Slash) {
+        region.pause()
+        try {
+            say("")
+            userLines(typed).forEach(::say)
+            say("")
+            try {
+                command(slash)
+            } catch (refused: OrknuxException) {
+                say(theme.warning(refused.message ?: "Could not do that."))
+            }
+            say("")
+        } finally {
+            region.resume()
         }
     }
 
@@ -2209,6 +2243,16 @@ class Interactive(
 
         /** How long the command door may take to open at the start before the bar says it is not open. */
         const val DEVICE_GRACE_MILLIS = 15_000L
+
+        /**
+         * What may run while a turn is going: nothing that starts one (skill, review, goal, agent), switches the
+         * conversation (resume, clear, workspace), or reads a line with the editor the turn is not using (answer,
+         * theme). The rest wait in the queue for the turn to end.
+         */
+        val WHILE_WORKING = setOf(
+            "attach", "detach", "open", "thinking", "effort", "subagents", "sessions", "usage", "mode", "rules",
+            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help",
+        )
 
         /** Ctrl+T: the sessions of this chat, opened and closed again. */
         const val SESSIONS_KEY = 20

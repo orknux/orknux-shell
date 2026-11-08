@@ -164,10 +164,18 @@ class LiveRegion(
     fun redraw() = synchronized(lock) {
         if (!active || !ansi || paused) return
         sink(SYNC_START)
+        val before = drawnRows
         erase()
+        // Fewer rows than were drawn - a list of commands closed, a queued line sent - and the region is pulled down by
+        // as many, so its last row stays directly above the status bar instead of leaving empty rows under it.
+        val fewer = before - lines().size
+        if (anchored && fewer > 0) sink("\u001b[${fewer}T\u001b[${fewer}B")
         draw()
         sink(SYNC_END)
     }
+
+    /** Whether the region sits on the status bar, at the foot of the screen, and is kept there as it shrinks. */
+    @Volatile var anchored = false
 
     /** The region's lines as they are now. */
     fun lines(): List<String> {
