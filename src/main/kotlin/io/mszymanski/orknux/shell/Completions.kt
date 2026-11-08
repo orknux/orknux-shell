@@ -34,7 +34,10 @@ class Completions(private val sources: CompletionSources) {
         val index = words.size - 1
         val first = words.first()
         val all: List<Completion> = when {
-            index == 0 && first.startsWith("/") -> SlashCommands.ALL.map { Completion("/" + it.name, it.summary) }
+            // The Shell's own commands, then the skills, which are typed with a slash here too.
+            index == 0 && first.startsWith("/") -> SlashCommands.ALL.map { Completion("/" + it.name, it.summary) } +
+                sources.skills().filter { key -> SlashCommands.ALL.none { it.name.equals(key, ignoreCase = true) } }
+                    .map { Completion("/$it", "skill") }
             index == 0 && first.startsWith("@") -> sources.agents().map { Completion("@$it") }
             first.startsWith("/") -> arguments(first.removePrefix("/").lowercase(), words, index, word)
             else -> sources.marker()?.takeIf { word.startsWith(it) }?.let { m -> sources.skills().map { Completion(m + it) } } ?: emptyList()

@@ -16,7 +16,7 @@ class PlainPrompter(private val input: BufferedReader, private val out: PrintStr
         out.print(prompt + (default?.let { " [$it]" } ?: "") + ": ")
         out.flush()
         val line = input.readLine() ?: return null
-        return line.trim().ifEmpty { default }
+        return line.trim().ifEmpty { default ?: "" }
     }
 
     override fun secret(prompt: String): String? {
@@ -41,11 +41,22 @@ class PlainPrompter(private val input: BufferedReader, private val out: PrintStr
  */
 class Login(private val store: ConfigStore, private val prompter: Prompter) {
 
+    /** Asked until there is an answer: an empty one is a slip, not a wish to leave. Ctrl+C or Ctrl+D leaves. */
+    private fun askServer(before: String?): String? {
+        while (true) {
+            val said = prompter.ask("Orknux server (for example https://orknux.example.com)", before)?.let(::pasted)
+            if (said == null) {
+                prompter.say("Not signed in.")
+                return null
+            }
+            if (said.isNotBlank()) return said
+            prompter.say("Type or paste the address of your Orknux server, or press Ctrl+C to leave.")
+        }
+    }
+
     fun login(serverArgument: String?, token: String?, username: String?, password: String?): Config? {
         val before = store.load()
-        val server = serverArgument?.takeIf { it.isNotBlank() }
-            ?: prompter.ask("Orknux server (for example https://orknux.example.com)", before.server)
-            ?: return null
+        val server = serverArgument?.takeIf { it.isNotBlank() } ?: askServer(before.server) ?: return null
         val client = OrknuxClient(server, token = token)
         val api = Api(client)
         api.compatibility()?.let { (compatible, reason) ->
@@ -89,7 +100,8 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
 
         var attempts = 0
         while (attempts++ < 3) {
-            val user = username ?: prompter.ask("Username", before.user.takeIf { sameServer }) ?: return null
+            val user = username ?: generateSequence { prompter.ask("Username", before.user.takeIf { sameServer })?.let(::pasted) }
+                .firstOrNull { it.isNotEmpty() } ?: return null
             val secret = password ?: prompter.secret("Password for $user") ?: return null
             val session = OrknuxClient(client.server)
             val body = Json.obj().put("username", user).put("password", secret)
@@ -128,3 +140,11 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
         return config.signedIn
     }
 }
+
+/**
+ * An answer with what a terminal's paste can leave in it taken out: the
+ * bracketed-paste markers, when they arrive split - over ssh, say - and the
+ * line editor reads them as text, and the escape before them.
+ */
+fun pasted(answer: String): String =
+    answer.replace(Regex("""\u001b?\[20[01]~"""), "").replace("\u001b", "").trim()

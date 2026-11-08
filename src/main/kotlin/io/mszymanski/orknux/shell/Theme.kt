@@ -4,7 +4,7 @@ package io.mszymanski.orknux.shell
  * Orknux's own colours, in the terminal.
  *
  * The defaults are the web interface's dark tokens (`orknux-ui/src/styles/tokens.css`):
- * iron-moss for the brand, the near-white of primary text, zinc for muted, and
+ * Orknux blue for the brand (the interface's default accent), the near-white of primary text, zinc for muted, and
  * the thinking red that keeps a model's reasoning from reading as its answer.
  */
 class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth = ColourDepth.detect()) {
@@ -48,7 +48,7 @@ class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth 
         const val NOT_UNDERLINE = "\u001b[24m"
 
         val DEFAULTS: Map<String, String> = linkedMapOf(
-            "accent" to "#5f8467",
+            "accent" to "#4f7fc4",
             "text" to "#e4e4e7",
             "muted" to "#71717a",
             "success" to "#10b981",

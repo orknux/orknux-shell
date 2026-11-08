@@ -22,7 +22,9 @@ class CompletionsTest {
 
     @Test
     fun `slash alone lists every command, and a part completes it`() {
-        assertEquals(SlashCommands.ALL.map { "/" + it.name }, values("/"))
+        // The Shell's commands, then the skills, typed with a slash too.
+        assertEquals(SlashCommands.ALL.map { "/" + it.name } + listOf("/code-review", "/deploy"), values("/"))
+        assertEquals(listOf("/deploy"), values("/dep"))
         assertEquals(listOf("/review", "/resume", "/rules"), values("/r"))
         assertEquals(listOf("/review", "/resume", "/rules"), values("/R"))
         assertEquals(listOf("/goal"), values("/go"))

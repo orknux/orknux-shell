@@ -154,8 +154,26 @@ object Cli {
         }
     }
 
+    /** Held, so the setting is not collected with the logger: JLine's warnings would land on the screen being drawn. */
+    private val jlineLog = java.util.logging.Logger.getLogger("org.jline").apply { level = java.util.logging.Level.OFF }
+
+    /**
+     * The terminal type to read capabilities for. A type this machine's terminfo
+     * does not know - xterm-kitty, xterm-ghostty where their entry is not
+     * installed - left JLine without the capabilities the status line needs, so
+     * it was never drawn; every such terminal speaks xterm, so that is what it
+     * is read as.
+     */
+    fun terminalType(term: String? = System.getenv("TERM"), known: (String) -> Boolean = { t -> runCatching { org.jline.utils.InfoCmp.getInfoCmp(t) }.isSuccess }): String? =
+        when {
+            term.isNullOrBlank() || Platform.isWindows() -> null
+            known(term) -> null
+            else -> "xterm-256color"
+        }
+
     fun terminal(): Terminal = TerminalBuilder.builder()
         .system(true)
+        .also { builder -> jlineLog.level; terminalType()?.let { builder.type(it) } }
         .name("Orknux Shell")
         // All three: JLine reads the output's encoding from the platform otherwise, and a native image finds US-ASCII there.
         .encoding(StandardCharsets.UTF_8)
@@ -174,7 +192,7 @@ class TerminalPrompter(terminal: Terminal) : Prompter {
     private val writer = terminal.writer()
 
     override fun ask(prompt: String, default: String?): String? = try {
-        reader.readLine("$prompt: ", null, null as MaskingCallback?, default).trim().ifEmpty { default }
+        reader.readLine("$prompt: ", null, null as MaskingCallback?, default).trim().ifEmpty { default ?: "" }
     } catch (_: UserInterruptException) {
         null
     } catch (_: org.jline.reader.EndOfFileException) {

@@ -116,7 +116,7 @@ session cookie or token in it is as good as a password while it lasts.
     "ask": ["\\brm\\s+-[a-zA-Z]*r[a-zA-Z]*f", "\\bmkfs\\b", "\\bdd\\s+if=", "..."],
     "allow": ["^git\\s+status\\b"]
   },
-  "theme": { "accent": "#5f8467", "text": "#e4e4e7", "muted": "#71717a",
+  "theme": { "accent": "#4f7fc4", "text": "#e4e4e7", "muted": "#71717a",
              "success": "#10b981", "warning": "#f59e0b", "danger": "#f87171",
              "thinking": "#c4453d", "code": "#c084fc" }
 }

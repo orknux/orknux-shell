@@ -6,8 +6,8 @@ package io.mszymanski.orknux.shell
  *
  * The region - the thinking streaming now, a spinner with what is happening
  * and for how long, the attachments and the status line - sits under the
- * transcript and is redrawn in place: back up to its first line, clear to the
- * end of the screen, draw it again. A transcript line is written by clearing
+ * transcript and is redrawn in place: back up to its first line, clear its
+ * rows, draw it again. A transcript line is written by clearing
  * the region, writing the line, and drawing the region under it, so the region
  * moves down with the text and is never torn. Every write is under one lock,
  * so a tick of the spinner can never land in the middle of a line.
@@ -151,18 +151,33 @@ class LiveRegion(
         drawnRows = rows.size
     }
 
-    /** Back to the region's first row, and everything from there down cleared. */
+    /**
+     * Back to the region's first row, with its own rows cleared and nothing
+     * else: the status bar is pinned at the foot of the screen, under the
+     * scrolling area, and clearing to the end of the screen took it with it.
+     */
     private fun erase() {
         if (!ansi || drawnRows == 0) return
-        sink("\r" + (if (drawnRows > 1) "\u001b[${drawnRows - 1}A" else "") + CLEAR_DOWN)
+        val up = drawnRows - 1
+        val out = StringBuilder("\r")
+        if (up > 0) out.append("\u001b[").append(up).append('A')
+        repeat(drawnRows) { row ->
+            out.append(CLEAR_LINE)
+            if (row < up) out.append("\u001b[B")
+        }
+        if (up > 0) out.append("\u001b[").append(up).append('A')
+        sink(out.toString())
         drawnRows = 0
     }
+
+    /** Runs [block] with nothing else drawing: for the status bar, which is written from outside the region. */
+    fun <T> exclusive(block: () -> T): T = synchronized(lock) { block() }
 
     companion object {
         val BRAILLE = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
         val ASCII = listOf("|", "/", "-", "\\")
         const val THINKING_LINES = 5
-        const val CLEAR_DOWN = "\u001b[J"
+        const val CLEAR_LINE = "\u001b[2K"
         const val HIDE_CURSOR = "\u001b[?25l"
         const val SHOW_CURSOR = "\u001b[?25h"
         /** Synchronized output: a terminal that knows it shows the frame whole; one that does not ignores it. */

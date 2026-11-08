@@ -76,9 +76,12 @@ class Interactive(
     private var prefill: String? = null
 
     fun run(): Int {
-        status = runCatching { Status.getStatus(terminal) }.getOrNull()
-        reader = buildReader()
         val drawable = terminal.type != Terminal.TYPE_DUMB && terminal.type != Terminal.TYPE_DUMB_COLOR
+        if (drawable) takeScreen()
+        status = runCatching { Status.getStatus(terminal) }.getOrNull()
+        // Its rows taken now, on the empty screen: taken later, the first draw scrolled the banner away.
+        runCatching { status?.update(listOf(AttributedString(""), AttributedString(""))) }
+        reader = buildReader()
         region = LiveRegion(
             sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
             width = ::width,
@@ -118,6 +121,19 @@ class Interactive(
             runCatching { reader.history.save() }
         }
         return 0
+    }
+
+    /**
+     * The whole window, from the top: what the shell had on it is scrolled
+     * up into the terminal's scrollback - not wiped, and not an alternate
+     * screen, so the conversation itself stays in the scrollback too and a
+     * mouse wheel reads back through it - and the chat starts on a clean
+     * screen with the status bar pinned at its foot.
+     */
+    private fun takeScreen() {
+        val rows = terminal.height.takeIf { it > 0 } ?: return
+        terminal.writer().print("\u001b[$rows;1H" + "\n".repeat(rows) + "\u001b[H\u001b[J")
+        terminal.writer().flush()
     }
 
     // ---- setting up --------------------------------------------------------------------------
@@ -169,6 +185,21 @@ class Interactive(
             .option(LineReader.Option.CASE_INSENSITIVE, true)
             .option(LineReader.Option.AUTO_MENU_LIST, true)
             .build()
+        /*
+         * The commands are listed as a / is typed, and narrowed with every key
+         * after it, as in Claude Code: nobody should have to know that Tab is
+         * what shows them. Only while the line is one word starting with /,
+         * and the cursor at its end; past that, Tab completes as before.
+         */
+        for (name in listOf(LineReader.SELF_INSERT, LineReader.BACKWARD_DELETE_CHAR)) {
+            val plain = r.widgets[name] ?: continue
+            r.widgets[name] = org.jline.reader.Widget {
+                val done = plain.apply()
+                val typed = r.buffer.toString()
+                if (r.buffer.cursor() == typed.length && Regex("""/[^\s/]*""").matches(typed)) autoList(r, typed)
+                done
+            }
+        }
         r.widgets["orknux-cycle-mode"] = org.jline.reader.Widget { cycleMode(); true }
         r.widgets["orknux-newline"] = org.jline.reader.Widget { r.buffer.write("\n"); true }
         r.widgets["orknux-thinking"] = org.jline.reader.Widget { showThinking(); true }
@@ -180,11 +211,30 @@ class Interactive(
         return r
     }
 
-    private fun completer(): Completer {
-        val completions = Completions(object : CompletionSources {
+    /** True while the list is drawn as one types, rather than on Tab. */
+    @Volatile private var listingAsTyped = false
+
+    /**
+     * The list under a / as it is typed - only where it fits on the screen,
+     * since a list that does not fit asks "do you wish to see all" and takes
+     * the next key as the answer. A / alone lists the Shell's own commands;
+     * a letter after it narrows to commands and skills alike.
+     */
+    private fun autoList(r: LineReader, typed: String) {
+        listingAsTyped = true
+        try {
+            val count = completions.complete(typed).size
+            if (count in 1..(terminal.height - 8).coerceAtLeast(5)) r.callWidget(LineReader.LIST_CHOICES)
+        } finally {
+            listingAsTyped = false
+        }
+    }
+
+    private val completions: Completions by lazy {
+        Completions(object : CompletionSources {
             override fun agents() = agents.map { it.name }
             override fun workspaces() = workspacesCached().map { it.name }
-            override fun skills() = skillsCached().map { it.key }
+            override fun skills() = if (listingAsTyped && reader.buffer.toString() == "/") emptyList() else skillsCached().map { it.key }
             override fun marker() = conversation.workspace.commandMarker
             override fun models() = modelsCached().map { it.name }
             override fun chats() = runCatching { api.chats(conversation.workspace.id).map { it.title } }.getOrDefault(emptyList())
@@ -195,6 +245,9 @@ class Interactive(
             override fun subagents() = runCatching { subagentsListed().size }.getOrDefault(0)
             override fun files(prefix: String) = this@Interactive.files(prefix)
         })
+    }
+
+    private fun completer(): Completer {
         return Completer { _, line, candidates ->
             completions.complete(line.line().substring(0, line.cursor())).forEach {
                 candidates += Candidate(it.value, it.value, null, it.description, null, null, it.complete)
@@ -287,6 +340,10 @@ class Interactive(
             command(slash)
             return true
         }
+        skillCommand(text)?.let { message ->
+            turn(message)
+            return true
+        }
         if (text.startsWith("@")) addressed(text)?.let { (agent, message) ->
             side(agent, message)
             return true
@@ -301,6 +358,21 @@ class Interactive(
         }
         turn(text)
         return true
+    }
+
+    /**
+     * `/plan add a cache` where plan is a skill and not a command of the Shell's:
+     * sent as the workspace's own command, `!plan add a cache`, which is what
+     * the server reads. Everything in the Shell is typed with a slash, so a
+     * skill is too; the marker still works as it is.
+     */
+    private fun skillCommand(text: String): String? {
+        if (!text.startsWith("/")) return null
+        val key = text.substring(1).substringBefore(' ').substringBefore('\n')
+        if (key.isEmpty()) return null
+        val marker = conversation.workspace.commandMarker ?: return null
+        val skill = skillsCached().firstOrNull { it.key.equals(key, ignoreCase = true) } ?: return null
+        return marker + skill.key + text.substring(1 + key.length)
     }
 
     /** `@Research bot what is new` is the agent Research bot and the message; the longest name that fits wins. */
@@ -341,8 +413,7 @@ class Interactive(
         active = into
         lastTurn = renderer
         phase = Phase.TURN
-        // The line editor's status line is put away while the turn draws its own region, and comes back after.
-        runCatching { status?.update(emptyList()) }
+        // The status bar stays where it is, at the foot of the screen, and is kept up to date by the ticker.
         val saved = terminal.enterRawMode()
         val raw = terminal.attributes
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
@@ -351,8 +422,10 @@ class Interactive(
         region.start { below() }
         // Ten frames a second, and only while a turn runs: nothing ticks when nothing is happening.
         val ticker = Thread.ofPlatform().daemon().name("orknux-shell-ticker").start {
+            var n = 0
             while (phase == Phase.TURN) {
                 region.tick()
+                if (++n % 10 == 0 && status != null) footer()
                 try { Thread.sleep(100) } catch (_: InterruptedException) { break }
             }
         }
@@ -382,11 +455,14 @@ class Interactive(
             say(theme.warning("This server does not know chats opened in Orknux Shell yet, so its agent cannot run commands here."))
         }
         if (status == null) say(theme.muted(statusText()))
+        // A blank line between an answer and the next prompt.
+        say("")
         if (into === conversation) checkGoal()
     }
 
     /** What sits under the spinner: the files waiting to go, and the status line. */
-    private fun below(): List<String> = listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText())
+    private fun below(): List<String> =
+        if (status != null) emptyList() else listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText())
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
     private fun interruptTurn() {
@@ -620,13 +696,15 @@ class Interactive(
 
     /** The status line under the editor, with the files waiting to go; while a turn runs, the region draws it instead. */
     private fun footer() {
-        if (::region.isInitialized && region.active) {
+        if (::region.isInitialized && region.active && status == null) {
             region.redraw()
             return
         }
         val st = status ?: return
-        val lines = below()
-        synchronized(out) { runCatching { st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) }) } }
+        // A blank row above it and a column in from the edge: the bar is a bar, not the last line of the answer.
+        val lines = listOf("") + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText()).map { " $it" }
+        val draw = { runCatching { st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 2)) }) } }
+        synchronized(out) { if (::region.isInitialized) region.exclusive(draw) else draw() }
     }
 
     private fun chips(): String = attachments.mapIndexed { i, a ->
@@ -644,7 +722,8 @@ class Interactive(
             c.effort?.let { theme.muted("effort ") + theme.text(it) },
             goal?.takeIf { it.running }?.let { theme.accent("goal ${it.progress}") },
             theme.muted("↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)"),
-            theme.muted(TurnRenderer.cost(u.cost)),
+            // The cost only where the model has a price; a local model's has none, and a dash read as a glitch.
+            u.cost?.let { theme.muted(TurnRenderer.cost(it)) },
             device,
         ).joinToString(theme.muted(" · "))
     }
@@ -724,7 +803,7 @@ class Interactive(
             "Ctrl+D" to "quit",
         ).forEach { (k, v) -> say("  " + theme.accent(k) + theme.muted("  $v")) }
         say(theme.muted("Paste or drop a file path on its own to attach it."))
-        conversation.workspace.commandMarker?.let { say(theme.muted("Skills: type ${it}key anywhere in a message, or /skill.")) }
+        conversation.workspace.commandMarker?.let { say(theme.muted("Skills: start a message with /key, or write ${it}key anywhere in one; /skill lists them.")) }
     }
 
     private fun usage() {
@@ -785,8 +864,8 @@ class Interactive(
         val all = api.skills(conversation.workspace.id, conversation.agent).also { skills = it }
         if (argument == null) {
             if (all.isEmpty()) say(theme.muted("No skill is within this agent's reach."))
-            all.forEach { s -> say("  " + theme.accent(marker + s.key) + theme.muted("  " + (s.description?.let { TurnRenderer.clip(TurnRenderer.oneLine(it), 80) } ?: s.name))) }
-            if (all.isNotEmpty()) say(theme.muted("Use one: /skill <key> [message], or type ${marker}<key> in a message."))
+            all.forEach { s -> say("  " + theme.accent("/" + s.key) + theme.muted("  " + (s.description?.let { TurnRenderer.clip(TurnRenderer.oneLine(it), 80) } ?: s.name))) }
+            if (all.isNotEmpty()) say(theme.muted("Use one: /<key> [message] at the start, or ${marker}<key> anywhere in a message."))
             return
         }
         val key = argument.substringBefore(' ')
@@ -1054,8 +1133,10 @@ class Interactive(
             region.phase("goal", "Goal · iteration ${(goal?.iteration ?: 0) + 1} of ${goal?.maxIterations ?: "∞"} · working")
             region.start { below() }
             val ticker = Thread.ofPlatform().daemon().start {
+                var n = 0
                 while (phase == Phase.TURN) {
                     region.tick()
+                    if (++n % 10 == 0 && status != null) footer()
                     try { Thread.sleep(100) } catch (_: InterruptedException) { break }
                 }
             }

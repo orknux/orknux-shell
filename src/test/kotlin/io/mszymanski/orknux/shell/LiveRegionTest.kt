@@ -33,7 +33,7 @@ class LiveRegionTest {
         }
         val ticks = screen.writes.drop(before).joinToString("")
         assertFalse(ticks.contains('\n'), "a tick wrote a newline")
-        assertTrue(ticks.contains("\r\u001b[J"), "each frame clears from the line start")
+        assertTrue(ticks.contains("\r\u001b[2K"), "each frame clears its row from the line start")
         assertTrue(ticks.contains("Thinking · 3s"), ticks)
         region.stop()
         assertTrue(screen.written.endsWith(LiveRegion.SHOW_CURSOR))
@@ -50,7 +50,9 @@ class LiveRegionTest {
         region.tick()
         val frame = screen.writes.joinToString("")
         // Thinking header, two lines of it, the spinner and the status: five rows, so four up.
-        assertTrue(frame.contains("\r\u001b[4A\u001b[J"), frame)
+        assertTrue(frame.contains("\r\u001b[4A" + "\u001b[2K\u001b[B".repeat(4) + "\u001b[2K\u001b[4A"), frame)
+        // Never to the end of the screen: the status bar is pinned below.
+        assertFalse(frame.contains("\u001b[J"), frame)
         assertEquals(4, frame.split("\r\n").size - 1)
     }
 
@@ -100,7 +102,7 @@ class LiveRegionTest {
         region.stop()
         // Replay the escapes: every transcript line must arrive whole, between its own clear and its own CRLF.
         val text = screen.written.toString()
-        val lines = Regex("\u001b\\[J(transcript line number \\d+ of the answer)\r\n").findAll(text).map { it.groupValues[1] }.toList()
+        val lines = Regex("\u001b\\[2K(?:\u001b\\[\\d+A)?(transcript line number \\d+ of the answer)\r\n").findAll(text).map { it.groupValues[1] }.toList()
         assertEquals((0 until 500).map { "transcript line number $it of the answer" }, lines)
         assertFalse(Regex("transcript line number \\d+ of[^\r]*⠋").containsMatchIn(text))
     }
