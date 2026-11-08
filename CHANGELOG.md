@@ -4,6 +4,21 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.32
+
+### Changed
+
+- Send now (Ctrl+S) while a subagent's session is on the screen sends what
+  you typed into that subagent's turn, where it reads it at its next step -
+  the agent you are watching is the one being steered. Enter still queues for
+  this chat's main session. Where the subagent is not working on anything,
+  the Shell says so and sends nothing. Needs a server with
+  `postSessionMessageDuringTurn`.
+
+### Fixed
+
+- A blank line after "sent now", before the agent's next step.
+
 ## 1.0.31
 
 ### Added

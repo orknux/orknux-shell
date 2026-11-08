@@ -988,8 +988,10 @@ class Interactive(
 
     /** What the empty typing line says: where a message goes - this chat's main session, said while another is on the screen - and how to send it now. */
     private fun typingHint(): String {
-        val to = if (viewing != Transcript.MAIN) " to ${conversation.agent?.name ?: "the main agent"} (main)" else ""
-        return "type to queue a message$to for when this turn ends" + (if (queued.isEmpty()) " · ${keyName("send-now")} sends it now" else "")
+        val followed = viewed?.takeIf { viewing != Transcript.MAIN }
+        val to = if (followed != null) " to ${conversation.agent?.name ?: "the main agent"} (main)" else ""
+        val now = if (followed != null) " · ${keyName("send-now")} sends it to ${followed.agent} now" else if (queued.isEmpty()) " · ${keyName("send-now")} sends it now" else ""
+        return "type to queue a message$to for when this turn ends$now"
     }
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
@@ -1114,6 +1116,27 @@ class Interactive(
      */
     private fun sendNow() {
         val typed = ahead.toString().trim()
+        // Watching a subagent work, what is typed goes into its turn: that is the agent on the screen, and the one
+        // being steered. What is queued is this chat's, and goes to this chat's main session as it always does.
+        val followed = viewed
+        if (typed.isNotEmpty() && viewing != Transcript.MAIN && followed != null) {
+            val left = try {
+                api.postDuringSession(followed.sessionId, typed)
+            } catch (refused: OrknuxException) {
+                say(theme.warning("Not sent: ") + theme.muted(refused.message ?: "the server refused it."))
+                return
+            }
+            if (!left) {
+                say(theme.warning("Not sent: ") + theme.muted("${followed.agent} is not working on anything now, so nothing there would read it."))
+                return
+            }
+            ahead.setLength(0)
+            aheadTyped()
+            userLines(typed).forEach { say(it) }
+            say(theme.muted("  sent now - ${followed.agent} reads it at its next step"))
+            say("")
+            return
+        }
         val sending = if (typed.isNotEmpty()) listOf(typed) else queued.toList()
         if (sending.isEmpty()) return
         val into = active ?: conversation
@@ -1133,6 +1156,8 @@ class Interactive(
             userLines(text).forEach { say(it, owner = Transcript.MAIN) }
             say(theme.muted("  sent now - the agent reads it at its next step"), owner = Transcript.MAIN)
         }
+        // Room after it, as after anything said: the turn's first piece of work writes none of its own.
+        say("", owner = Transcript.MAIN)
     }
 
     private fun drainSequence(input: NonBlockingReader) {
@@ -1745,7 +1770,7 @@ class Interactive(
         repaint()
         if (followed[s.sessionId] == null) {
             say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
-            say(theme.muted("What you write goes to this chat's main session; ${keyName("sessions")} or /sessions goes back to it."))
+            say(theme.muted("Enter queues what you write for this chat's main session; ${keyName("send-now")} sends it to ${s.agent} now. ${keyName("sessions")} or /sessions goes back."))
             say("")
             followed[s.sessionId] = 0
         }

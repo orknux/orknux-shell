@@ -163,6 +163,13 @@ class Api(val client: OrknuxClient) {
         )
     }
 
+    /** Leaves [text] in an asked agent's session while its turn runs; false where nothing runs there, so it was not left. */
+    fun postDuringSession(sessionId: String, text: String): Boolean =
+        client.graphql(
+            "mutation PostDuringSession(\$id: ID!, \$text: String!) { postSessionMessageDuringTurn(id: \$id, text: \$text) }",
+            vars("id" to sessionId, "text" to text),
+        ).bool("postSessionMessageDuringTurn") ?: false
+
     /** Whether My Claude Code is offered here, why not where it is not, and whether the caller's Claude Code is connected. */
     fun claudeCode(): ClaudeCodeStatus? = runCatching {
         client.graphql("query { claudeCodeChat { available reason connected } }").get("claudeCodeChat")?.let {
