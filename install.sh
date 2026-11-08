@@ -59,9 +59,9 @@ case "$(uname -m)" in
 esac
 
 if command -v curl >/dev/null 2>&1; then
-  get() { curl -fsSL --retry 3 -o "$2" "$1"; }
+  get() { curl -fsSL --retry 6 --retry-delay 3 --connect-timeout 20 -o "$2" "$1"; }
 elif command -v wget >/dev/null 2>&1; then
-  get() { wget -q -O "$2" "$1"; }
+  get() { wget -q --tries=7 --waitretry=3 --retry-on-http-error=502,503,504 -O "$2" "$1"; }
 else
   fail "needs curl or wget"
 fi
