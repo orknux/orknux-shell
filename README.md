@@ -168,3 +168,18 @@ or has no section. With the `ORKNUX_SHELL_SIGNING_KEY` and
 `ORKNUX_AI_PUBLISH_TOKEN` secrets set it also signs every file and offers the
 release through orknux.ai, which is what `/update` installs from.
 `ORKNUX_SHELL_TRACE=<file>` logs keys and phases, for a terminal that misbehaves.
+
+## Pictures
+
+`scripts/screenshot.py` photographs the Shell for the manual: it runs the
+binary in a pseudo-terminal, feeds it keys, and draws the screen as a terminal
+would into a PNG, so the pictures are taken on a machine with no display and
+come out the same every time. `pip install pyte pillow`, then
+
+```
+ORKNUX_SHELL_CONFIG=... scripts/screenshot.py target/orknux-shell out/ \
+    'wait:4' 'Reply with the single word: ok\r' 'wait:40' 'shot:shell-chat'
+```
+
+Steps are `wait:SECONDS`, `shot:NAME`, or keys with Python escapes (`\r`
+Enter, `\x14` Ctrl+T, `\x1b[B` Down).
