@@ -19,6 +19,7 @@ class ThinkingPageTest {
         val out = page("jj\u000f", lines)
         assertTrue(out.startsWith(ThinkingPage.ALTERNATE_ON), "on its own screen")
         assertTrue(out.endsWith(ThinkingPage.ALTERNATE_OFF), "and back to the conversation's, untouched")
+        assertTrue(out.contains(ThinkingPage.WHEEL_AS_ARROWS_ON) && out.contains(ThinkingPage.WHEEL_AS_ARROWS_OFF), "the wheel scrolls it, and is given back")
         val last = stripAnsi(out.split(LiveRegion.SYNC_START).last())
         assertTrue(last.contains("line 3") && !last.contains("line 2\r"), last)
         assertTrue(last.contains("3-6 of 20"), last)

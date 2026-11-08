@@ -405,6 +405,7 @@ class Interactive(
         while (true) {
             drainApprovals()
             footer()
+            alignToFoot()
             val line = try {
                 phase = Phase.READING
                 if (approvals.isNotEmpty()) continue
@@ -543,11 +544,11 @@ class Interactive(
                 // Kept for Ctrl+O, but drawn live only when asked for: by default the spinner says "Thinking"
                 // and the text is read afterwards, from the "Thought for" line, as in Claude Code.
                 region.thinkingHint = detailsHint()
-                region.thinking(if (config.thinking == "expanded" || thinkingShown) text else null)
+                region.thinking(if (config.thinking == "expanded" || thinkingShown) (text ?: if (thinkingShown) "" else null) else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
-        val renderer = TurnRenderer(theme, output, config.thinking, links) { thinkingShown }
+        val renderer = TurnRenderer(theme, output, config.thinking, links)
         val sending = if (into === conversation) attachments.toList() else emptyList()
         // A blank line between what was asked and what comes back.
         say("")
@@ -711,11 +712,11 @@ class Interactive(
                 if (text != null && liveThinking == null) thinkingSince = System.currentTimeMillis()
                 liveThinking = text
                 region.thinkingHint = detailsHint()
-                region.thinking(if (config.thinking == "expanded" || thinkingShown) text else null)
+                region.thinking(if (config.thinking == "expanded" || thinkingShown) (text ?: if (thinkingShown) "" else null) else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
-        val renderer = TurnRenderer(theme, output, config.thinking, links) { thinkingShown }
+        val renderer = TurnRenderer(theme, output, config.thinking, links)
         // The same keys as a turn sent from here - Ctrl+C or Esc interrupts, Ctrl+O shows the thinking, typing queues -
         // and Ctrl+C a key rather than a signal: as a signal it reached a handler that knew only turns sent from here.
         active = into
@@ -769,6 +770,38 @@ class Interactive(
         else slashRows().map { LiveRegion.clip(it, width() - 1) }
 
     /**
+     * The prompt back on the row directly above the status bar, wherever
+     * something left it - a long list, a resize, a split pane: the terminal is
+     * asked where the cursor is, and the text is scrolled down by the rows
+     * between. A terminal that does not answer within a moment is left as it is.
+     */
+    private fun alignToFoot() {
+        if (!region.ansi || status == null) return
+        val rows = terminal.height.takeIf { it > 0 } ?: return
+        val saved = terminal.enterRawMode()
+        val row = try {
+            terminal.writer().print("\u001b[6n")
+            terminal.writer().flush()
+            val input = terminal.reader()
+            val answer = StringBuilder()
+            val until = System.currentTimeMillis() + CURSOR_ANSWER_MILLIS
+            while (System.currentTimeMillis() < until) {
+                val c = input.read(25)
+                if (c < 0) continue
+                answer.append(c.toChar())
+                if (c == 'R'.code) break
+            }
+            Regex("\u001b\\[(\\d+);(\\d+)R").find(answer)?.groupValues?.get(1)?.toIntOrNull()
+        } catch (_: Exception) {
+            null
+        } finally {
+            terminal.attributes = saved
+        } ?: return
+        val gap = (rows - barRows()) - row
+        if (gap > 0) pullDown(gap)
+    }
+
+    /**
      * Moves the scrolling area's text down [rows] rows and the cursor with it:
      * what a list under the prompt, or an empty line entered, pushed up comes
      * back, and the prompt is on the last row above the status bar again.
@@ -790,6 +823,7 @@ class Interactive(
     private fun below(): List<String> {
         val typing = buildList {
             queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
+            if (queued.isNotEmpty() && region.active) add("")
             if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
         }
         // A blank line between what is happening and what is being written.
@@ -824,13 +858,7 @@ class Interactive(
                 if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
                 when (c) {
                     3 -> interruptTurn()
-                    15 -> {
-                        // Shown under the spinner while it is wanted, and gone again on the next Ctrl+O: nothing is
-                        // written into the transcript, so there is nothing to take back.
-                        thinkingShown = !thinkingShown
-                        region.thinkingHint = detailsHint()
-                        region.thinking(if (thinkingShown || config.thinking == "expanded") liveThinking else null)
-                    }
+                    15 -> showTurnPage(input)
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
                     // Typed while the agent works: kept under the spinner, and Enter queues it for when the turn ends.
                     13, 10 -> {
@@ -862,8 +890,37 @@ class Interactive(
     }
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
+    /**
+     * Ctrl+O while a turn runs: the turn so far, in full - each thought, each
+     * tool call with all it was given and answered, and the thinking as it
+     * streams - on a page of its own that follows the turn as it goes. Ctrl+O,
+     * Esc or q closes it, the conversation as it was and what came meanwhile
+     * written under it; Ctrl+C closes it and interrupts the turn.
+     */
+    private fun showTurnPage(input: org.jline.utils.NonBlockingReader) {
+        region.pause()
+        val page = ThinkingPage(
+            { turnSoFar() }, theme, { terminal.height.takeIf { it > 0 } ?: 24 }, ::width,
+            sink = { terminal.writer().print(it); terminal.writer().flush() },
+            key = { timeout -> input.read(if (timeout < 0) 0L else timeout) },
+            live = true, title = "This turn so far, in full",
+        )
+        try {
+            page.show()
+        } finally {
+            region.resume()
+        }
+        if (page.interrupted) interruptTurn()
+    }
+
+    private fun turnSoFar(): List<String> {
+        val done = lastTurn?.details?.toList().orEmpty()
+        val now = liveThinking?.takeIf { it.isNotBlank() }?.let { TurnRenderer.fold(ThinkingBlock(it, System.currentTimeMillis() - thinkingSince), "expanded", theme, width()) }.orEmpty()
+        return (TurnRenderer.detailLines(done, theme, width()) + now).ifEmpty { listOf(theme.muted("Nothing yet: the model has not thought aloud or called a tool in this turn.")) }
+    }
+
     /** What Ctrl+O does now, said on the spinner's line. */
-    private fun detailsHint(): String = if (thinkingShown) "Ctrl+O fewer details" else "Ctrl+O details"
+    private fun detailsHint(): String = "Ctrl+O this turn in full"
 
     /**
      * Whether this turn shows its details: the thinking live, and each tool call
@@ -1188,7 +1245,8 @@ class Interactive(
             device,
         ).joinToString(theme.muted(" · "))
         // The workspace is in the bar at the top of the window, where one is rather than what is going on.
-        return left to theme.muted("workspace ") + theme.text(c.workspace.name)
+        val update = updateWaiting?.let { theme.accent("update $it") + theme.muted(" · /update") + theme.muted("   ") }.orEmpty()
+        return left to update + theme.muted("workspace ") + theme.text(c.workspace.name)
     }
 
     private fun modeLabel(): String = when (conversation.mode) {
@@ -1303,9 +1361,16 @@ class Interactive(
         Thread.ofVirtual().name("orknux-shell-update-check").start {
             val news = runCatching { DailyCheck.run(store, Updater()) }.getOrNull() ?: return@start
             news.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
-            news.newer?.let { say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update")) }
+            news.newer?.let {
+                say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update"))
+                updateWaiting = it
+                footer()
+            }
         }
     }
+
+    /** A newer Shell the daily look found, said in the status bar until /update installs it. */
+    @Volatile private var updateWaiting: String? = null
 
     private fun update() {
         val updater = Updater()
@@ -1321,6 +1386,7 @@ class Interactive(
         say("")
         say(theme.muted("Downloading ${size(offer.file.size)}…"))
         val path = updater.install(offer)
+        updateWaiting = null
         say("")
         say(theme.success("✓ ") + "Orknux Shell ${offer.version} is installed" + theme.muted(" at $path; its signature checked against Orknux's release key."))
         say(theme.muted("This session goes on as ${Version.VERSION}. /quit and start orknux again to use it."))
@@ -1903,6 +1969,9 @@ class Interactive(
 
         /** How long the command door may take to open at the start before the bar says it is not open. */
         const val DEVICE_GRACE_MILLIS = 15_000L
+
+        /** How long the terminal has to say where the cursor is. */
+        const val CURSOR_ANSWER_MILLIS = 300L
 
         /** How many commands the list under a / shows at once. */
         const val SLASH_ROWS = 8

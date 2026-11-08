@@ -72,8 +72,30 @@ class LiveRegion(
         if (ansi) sink(SHOW_CURSOR)
     }
 
+    /** While another screen is up - the full-turn page - nothing is drawn; lines wait, and are written after. */
+    @Volatile var paused = false
+        private set
+    private val held = mutableListOf<String>()
+
+    fun pause() = synchronized(lock) { paused = true }
+
+    /** Back on the conversation's screen: what came meanwhile is written, and the region drawn again. */
+    fun resume() = synchronized(lock) {
+        paused = false
+        // The conversation's screen comes back as it was, the region's rows on it and the cursor where it was:
+        // they are erased and drawn again from there, as on any other redraw.
+        val waiting = held.toList()
+        held.clear()
+        waiting.forEach { line(it) }
+        if (waiting.isEmpty()) redraw()
+    }
+
     /** A permanent line into the transcript, above the region. */
     fun line(text: String) = synchronized(lock) {
+        if (paused) {
+            held += text
+            return
+        }
         if (!ansi) {
             sink(stripAnsi(text) + "\n")
             return
@@ -129,7 +151,7 @@ class LiveRegion(
 
     /** Draws again, for a resize or a status that changed. */
     fun redraw() = synchronized(lock) {
-        if (!active || !ansi) return
+        if (!active || !ansi || paused) return
         sink(SYNC_START)
         erase()
         draw()
@@ -149,7 +171,10 @@ class LiveRegion(
         thinking?.let { text ->
             out += (if (thinkingNow) spinner else "") + theme.thinking("Thinking") + theme.muted(" · ${(clock() - thinkingStarted) / 1000}s") +
                 (thinkingHint?.let { theme.dim(theme.muted(" · $it")) } ?: "")
-            TurnRenderer.wrapped(text, w - 4).takeLast(THINKING_LINES).forEach { out += "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
+            // Asked for and nothing written yet - between a tool's answer and the model's next words - said, rather
+            // than an empty space that reads as the key having done nothing.
+            if (text.isBlank()) out += "  " + theme.muted("│ ") + theme.dim(theme.muted("nothing written yet"))
+            else TurnRenderer.wrapped(text, w - 4).takeLast(THINKING_LINES).forEach { out += "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
         }
         val elapsed = (clock() - phaseStarted) / 1000
         if (!thinkingNow) {

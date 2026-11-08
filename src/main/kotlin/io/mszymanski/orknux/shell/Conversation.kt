@@ -298,9 +298,10 @@ class TurnRenderer(
                 out.phase("thinking", theme.thinking("Thinking"))
             }
             is ChatEvent.Thought -> closeThinking(event)
+            // No tool named is the answer itself being written: the server counts its characters the same way.
             is ChatEvent.Writing -> out.phase(
                 "writing:${event.tool}",
-                "Preparing a tool call" + (event.tool?.let { ": " + theme.accent(it) } ?: "") + theme.muted(" · ${event.chars} chars"),
+                (event.tool?.let { "Preparing a tool call: " + theme.accent(it) } ?: "Writing the answer") + theme.muted(" · ${event.chars} chars"),
             )
             is ChatEvent.Reading -> {
                 // `processed` is how much of the prompt has been read, the cached part included (the server's

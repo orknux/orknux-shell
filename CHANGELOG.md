@@ -4,6 +4,28 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.12
+
+### Added
+
+- A newer Orknux Shell, once the daily look has found one, is said in the
+  status bar beside the workspace - "update 1.0.13 · /update" - until /update
+  installs it.
+
+### Fixed
+
+- The prompt is put back on the row directly above the status bar before each
+  line, wherever something left it - a long list, a resize - so the live
+  block and the line being typed during a turn are always just above the bar.
+- Ctrl+O during a turn opens the turn so far in full - every thought, every
+  tool call with all it was given and answered, the thinking as it streams -
+  on a page that follows the turn as it goes, and stays open until Ctrl+O,
+  Esc or q closes it, the conversation as it was. It used to show only what
+  came after the key, and folded away when the thinking ended.
+- A blank line between the messages queued and the line being typed.
+- While the model writes its answer the spinner says "Writing the answer",
+  not "Preparing a tool call".
+
 ## 1.0.11
 
 ### Added
