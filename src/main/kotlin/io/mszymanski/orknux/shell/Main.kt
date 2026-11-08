@@ -40,6 +40,7 @@ object Cli {
               --password-stdin                 Read the password from standard input
           orknux logout                        Sign out, and forget the session
           orknux -p "message"                  Say one thing, print the answer, and leave
+          orknux update                        Install the newest version, checked against Orknux's release key
           orknux --version                     The version
 
         Options for a chat:
@@ -56,7 +57,7 @@ object Cli {
             when (val a = args[i]) {
                 "--version", "-V", "-v" -> o = o.copy(command = "version")
                 "--help", "-h", "help" -> o = o.copy(command = "help")
-                "login", "logout" -> o = o.copy(command = a)
+                "login", "logout", "update" -> o = o.copy(command = a)
                 "--token" -> o = o.copy(token = value(a))
                 "--username" -> o = o.copy(username = value(a))
                 "--password-stdin" -> o = o.copy(passwordStdin = true)
@@ -84,6 +85,7 @@ object Cli {
             return 2
         }
         val store = ConfigStore(options.config?.let { java.nio.file.Path.of(it) } ?: ConfigPaths.configFile())
+        Updater.tidy()
         return try {
             when (options.command) {
                 "version" -> {
@@ -100,6 +102,7 @@ object Cli {
                     0
                 }
                 "login" -> login(store, options)
+                "update" -> update(store)
                 else -> if (options.print != null) printMode(store, options) else chat(store, options)
             }
         } catch (refused: OrknuxException) {
@@ -123,6 +126,22 @@ object Cli {
             Login(store, PlainPrompter(stdin(), System.out)).login(options.positional, options.token, options.username, password)
         }
         return if (saved != null) 0 else 1
+    }
+
+    private fun update(store: ConfigStore): Int {
+        val updater = Updater()
+        val offer = updater.latest()
+        runCatching { store.update { it.copy(updateCheckedAt = System.currentTimeMillis(), updateLatest = offer.version) } }
+        if (!updater.newer(offer)) {
+            println("Orknux Shell ${Version.VERSION} is the newest there is.")
+            return 0
+        }
+        println("Orknux Shell ${offer.version}" + (offer.publishedAt?.let { ", published ${it.substringBefore('T')}" } ?: ""))
+        offer.changelog?.lines()?.filter { it.isNotBlank() }?.forEach { println("  $it") }
+        println("Downloading ${offer.file.size / 1_000_000} MB…")
+        val path = updater.install(offer)
+        println("Installed at $path; its signature checked against Orknux's release key.")
+        return 0
     }
 
     private fun printMode(store: ConfigStore, options: Options): Int {

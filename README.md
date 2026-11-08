@@ -24,7 +24,7 @@ before putting it in place, and need no root or administrator. The command is
 `orknux`, with `orkx` as its short name. Linux installs to `~/.local/bin`
 (`ORKNUX_SHELL_DIR` to choose), Windows to
 `%LOCALAPPDATA%\Programs\orknux-shell`, which it adds to your PATH. Running
-either again updates. Options: `--version v1.0.0` / `-Version v1.0.0` for a
+either again updates, and so does `orknux update` (below). Options: `--version v1.0.0` / `-Version v1.0.0` for a
 given release, `--uninstall` / `-Uninstall` to remove it, with `--purge` /
 `-Purge` to remove the sign-in too. On Linux, pass them as
 `curl ... | sh -s -- --uninstall`; on Windows, as
@@ -41,6 +41,7 @@ orknux login [server]       sign in: server, username, password (never echoed)
 orknux login URL --token orkx_...   sign in with an access token instead
 orknux logout
 orknux -p "message"         say one thing, print the answer, leave
+orknux update               install the newest version
 orknux --version
 ```
 `orkx` does the same as `orknux` everywhere.
@@ -59,6 +60,7 @@ orknux --version
 | `/effort [level\|default]` | the model's reasoning effort |
 | `/thinking [collapsed\|expanded\|hidden]` | read the last turn's thinking (also Ctrl+O), or set how it shows |
 | `/open <n>` | open a link of the last answer in the browser |
+| `/update` | install the newest Orknux Shell |
 | `/usage`, `/resume`, `/clear`, `/workspace`, `/mode`, `/theme`, `/rules`, `/help`, `/quit` | |
 
 Keys: Enter sends; Alt+Enter, Shift+Enter (where the terminal tells them
@@ -97,6 +99,21 @@ agent asks otherwise) is killed with everything it started.
 Commands run in `bash -lc` (or `sh -c`) on Linux and macOS, and in
 `powershell -NoProfile -Command` on Windows, unless `shell` says otherwise.
 
+## Updates
+
+Once a day a chat asks orknux.ai whether a newer version is out, and if one is
+says so in a line under the banner; it never installs anything on its own.
+`/update` (or `orknux update`) downloads it beside the program and puts it in
+place only when its size, its sha256 and its Ed25519 signature check out and it
+is newer than what runs. The signature is made in this repository's release CI
+with a key whose public half is built in
+(`src/main/resources/io/mszymanski/orknux/shell/release-keys.pem`); orknux.ai
+only passes it on, so it cannot hand out anything this program will install.
+On Windows the running program is renamed aside and removed at the next start.
+`ORKNUX_SHELL_UPDATES=off` or `"updates": false` in the configuration turns the
+daily look off, for a packaged or air-gapped install; `ORKNUX_SHELL_UPDATE_URL`
+points it at another site, for testing one.
+
 ## Configuration
 
 `~/.config/orknux/orknux-shell.json` (`$XDG_CONFIG_HOME` respected), or
@@ -111,6 +128,7 @@ session cookie or token in it is as good as a password while it lasts.
   "shell": null,
   "thinking": "collapsed",
   "links": "auto",
+  "updates": true,
   "commands": {
     "deny": [],
     "ask": ["\\brm\\s+-[a-zA-Z]*r[a-zA-Z]*f", "\\bmkfs\\b", "\\bdd\\s+if=", "..."],
@@ -138,5 +156,10 @@ them (`links: osc8|plain` to decide yourself).
 ```
 
 CI (`.github/workflows/build.yml`) builds native binaries for linux-x64 and
-windows-x64 and attaches them to a release on a `v*` tag.
+windows-x64 and attaches them to a release on a `v*` tag. A release is the
+version in `pom.xml`, tagged `v` and that version, with its section in
+`CHANGELOG.md` written first; the job refuses a tag that differs from the pom
+or has no section. With the `ORKNUX_SHELL_SIGNING_KEY` and
+`ORKNUX_AI_PUBLISH_TOKEN` secrets set it also signs every file and offers the
+release through orknux.ai, which is what `/update` installs from.
 `ORKNUX_SHELL_TRACE=<file>` logs keys and phases, for a terminal that misbehaves.

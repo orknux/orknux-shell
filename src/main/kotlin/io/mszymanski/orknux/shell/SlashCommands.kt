@@ -24,6 +24,7 @@ object SlashCommands {
         SlashCommand("mode", "[auto|ask|plan]", "Cycle or set the mode (also Shift+Tab)"),
         SlashCommand("theme", null, "Show the colours and where to change them"),
         SlashCommand("rules", null, "Show the rules for local commands"),
+        SlashCommand("update", null, "Install the newest Orknux Shell, checked against Orknux's release key"),
         SlashCommand("help", null, "What there is to type"),
         SlashCommand("quit", null, "Leave (also Ctrl+D)"),
     )

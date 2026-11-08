@@ -112,6 +112,7 @@ class Interactive(
         device = DeviceLoop(api.client, handler, deviceReport())
         device.start()
         footer()
+        lookForUpdate()
         try {
             loop()
         } finally {
@@ -856,7 +857,35 @@ class Interactive(
             "subagents" -> subagents(argument)
             "review" -> review(argument)
             "goal" -> goal(argument)
+            "update" -> update()
         }
+    }
+
+    // ---- updates -----------------------------------------------------------------------------
+
+    /** Once a day, in the background: one line where a newer Shell is out, and nothing else. */
+    private fun lookForUpdate() {
+        Thread.ofVirtual().name("orknux-shell-update-check").start {
+            val news = runCatching { DailyCheck.run(store, Updater()) }.getOrNull() ?: return@start
+            news.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
+            news.newer?.let { say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update")) }
+        }
+    }
+
+    private fun update() {
+        val updater = Updater()
+        val offer = updater.latest()
+        store.update { it.copy(updateCheckedAt = System.currentTimeMillis(), updateLatest = offer.version) }
+        if (!updater.newer(offer)) {
+            say(theme.muted("Orknux Shell ${Version.VERSION} is the newest there is."))
+            return
+        }
+        say(theme.bold("Orknux Shell ${offer.version}") + theme.muted(offer.publishedAt?.let { " · published ${it.substringBefore('T')}" } ?: ""))
+        offer.changelog?.lines()?.filter { it.isNotBlank() }?.take(12)?.forEach { say(theme.muted("  $it")) }
+        say(theme.muted("Downloading ${size(offer.file.size)}…"))
+        val path = updater.install(offer)
+        say(theme.success("✓ ") + "Orknux Shell ${offer.version} is installed" + theme.muted(" at $path; its signature checked against Orknux's release key."))
+        say(theme.muted("This session goes on as ${Version.VERSION}. /quit and start orknux again to use it."))
     }
 
     private fun modeMeaning(mode: String) = when (mode) {

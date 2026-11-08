@@ -61,6 +61,12 @@ data class Config(
     val thinking: String = "collapsed",
     /** Links in answers: `auto` decides by the terminal, `osc8` makes them clickable, `plain` writes the address out. */
     val links: String = "auto",
+    /** Whether to look for a newer Shell once a day; `ORKNUX_SHELL_UPDATES=off` says no as well. */
+    val updates: Boolean = true,
+    /** When orknux.ai was last asked for an update, in epoch milliseconds. */
+    val updateCheckedAt: Long? = null,
+    /** The newest version that check found, so a day without asking still says it is out. */
+    val updateLatest: String? = null,
 ) {
     val signedIn: Boolean get() = server != null && (token != null || cookies.isNotEmpty())
 
@@ -75,6 +81,9 @@ data class Config(
         shell?.let { root.put("shell", it) }
         root.put("thinking", thinking)
         root.put("links", links)
+        root.put("updates", updates)
+        updateCheckedAt?.let { root.put("updateCheckedAt", it) }
+        updateLatest?.let { root.put("updateLatest", it) }
         val rules = root.putObject("commands")
         listOf("allow" to commands.allow, "ask" to commands.ask, "deny" to commands.deny).forEach { (name, list) ->
             val array = rules.putArray(name)
@@ -120,6 +129,9 @@ data class Config(
                 user = root.str("user"),
                 thinking = root.str("thinking")?.takeIf { it in THINKING } ?: "collapsed",
                 links = root.str("links")?.takeIf { it in LINKS } ?: "auto",
+                updates = root.get("updates")?.takeIf { it.isBoolean }?.booleanValue() ?: true,
+                updateCheckedAt = root.get("updateCheckedAt")?.takeIf { it.isNumber }?.asLong(),
+                updateLatest = root.str("updateLatest"),
             )
         }
     }
@@ -173,6 +185,8 @@ class ConfigStore(val path: Path) {
         if (posix()) Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"))
     }
 
+    /** Read, changed and written as one step, so the update check in the background and the chat do not undo each other. */
+    @Synchronized
     fun update(change: (Config) -> Config): Config {
         val next = change(load())
         save(next)

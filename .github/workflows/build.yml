@@ -89,7 +89,90 @@ jobs:
         run: |
           cp install.sh install.ps1 dist/
           (cd dist && sha256sum orknux-shell-* orknux-shell.jar > SHA256SUMS && cat SHA256SUMS)
+      # A binary whose version is not its tag's would be offered to itself as
+      # an update for ever: every Shell would install it, and still be older.
+      - name: The tag is the version built
+        run: |
+          built="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -1)"
+          [ "v$built" = "$GITHUB_REF_NAME" ] || { echo "::error::pom.xml says $built and the tag is $GITHUB_REF_NAME"; exit 1; }
+
+      # That version's section of CHANGELOG.md: the release notes here and on orknux.ai.
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## $version" '$0==h {on=1; next} /^## / && on {exit} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || { echo "::error::CHANGELOG.md has no section ## $version"; exit 1; }
+          cat "$RUNNER_TEMP/notes.md"
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/notes.md
+
+      # Self-update (orknux-server docs/orknux-ai/client-releases.graphql, section 4).
+      # Each file is signed with the release key, whose public half every Shell
+      # carries (release-keys.pem): orknux.ai stores the signature and cannot
+      # make one, so a Shell installs only what this step signed. Each signature
+      # is checked against that same file before anything is sent, so a secret
+      # that does not match the key shipped fails here and not on every machine.
+      #
+      # Then declared once and sent file by file, each at the offset the site
+      # says it has; declaring the same files again resumes, so a re-run job
+      # carries on. The site publishes when the last byte of the last file has
+      # arrived and every digest matched.
+      - name: Offer it through orknux.ai
+        env:
+          TOKEN: ${{ secrets.ORKNUX_AI_PUBLISH_TOKEN }}
+          SIGNING_KEY: ${{ secrets.ORKNUX_SHELL_SIGNING_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ -z "$TOKEN" ] || [ -z "$SIGNING_KEY" ]; then
+            echo "::notice::ORKNUX_AI_PUBLISH_TOKEN or ORKNUX_SHELL_SIGNING_KEY is not set, so $version is not offered through orknux.ai and no Shell will update to it; it is on the GitHub release."
+            exit 0
+          fi
+          key="$RUNNER_TEMP/release-key.pem"
+          (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key")
+          public=src/main/resources/io/mszymanski/orknux/shell/release-keys.pem
+          declare -A files=(
+            [linux-x64]=dist/orknux-shell-linux-x64
+            [windows-x64]=dist/orknux-shell-windows-x64.exe
+            [any]=dist/orknux-shell.jar
+            [installer-sh]=dist/install.sh
+            [installer-ps1]=dist/install.ps1
+          )
+          entries=()
+          for platform in "${!files[@]}"; do
+            file="${files[$platform]}"
+            [ -f "$file" ] || { echo "::error::$file is missing"; exit 1; }
+            openssl pkeyutl -sign -inkey "$key" -rawin -in "$file" -out "$RUNNER_TEMP/sig"
+            openssl pkeyutl -verify -pubin -inkey "$public" -rawin -in "$file" -sigfile "$RUNNER_TEMP/sig" >/dev/null \
+              || { echo "::error::ORKNUX_SHELL_SIGNING_KEY is not the key in release-keys.pem: no Shell would install this release"; exit 1; }
+            entries+=("$(jq -n --arg p "$platform" --arg s "$(sha256sum "$file" | cut -d' ' -f1)" \
+              --argjson n "$(stat -c %s "$file")" --arg g "$(base64 -w0 "$RUNNER_TEMP/sig")" \
+              '{platform: $p, sha256: $s, size: $n, signature: $g}')")
+          done
+          rm -f "$key"
+          printf '%s\n' "${entries[@]}" | jq -s --arg v "$version" --rawfile notes "$RUNNER_TEMP/notes.md" \
+            '{version: $v, changelog: $notes, minimumServerVersion: null, files: .}' > "$RUNNER_TEMP/release.json"
+
+          site="https://orknux.ai/api/client-releases/shell"
+          answer="$(curl -sS --retry 4 --fail-with-body -X POST "$site" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' --data "@$RUNNER_TEMP/release.json")" \
+            || { echo "::error::orknux.ai refused the release: $answer"; exit 1; }
+          piece=$((90 * 1024 * 1024))
+          for platform in "${!files[@]}"; do
+            file="${files[$platform]}"
+            size="$(stat -c %s "$file")"
+            while [ "$(jq -r --arg p "$platform" '.files[] | select(.platform == $p) | .complete' <<<"$answer")" != "true" ]; do
+              offset="$(jq -r --arg p "$platform" '.files[] | select(.platform == $p) | .received' <<<"$answer")"
+              [ "$offset" -lt "$size" ] || { echo "::error::orknux.ai has every byte of $platform and has not completed it: $answer"; exit 1; }
+              dd if="$file" of="$RUNNER_TEMP/piece" iflag=skip_bytes,count_bytes skip="$offset" count="$piece" status=none
+              answer="$(curl -sS --retry 4 --fail-with-body -X PUT "$site/$version/files/$platform?offset=$offset" \
+                -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/octet-stream' --data-binary "@$RUNNER_TEMP/piece")" \
+                || { echo "::error::orknux.ai refused $platform at $offset: $answer"; exit 1; }
+            done
+            echo "orknux.ai has $platform ($size bytes)"
+          done
+          [ "$(jq -r '.published' <<<"$answer")" = "true" ] || { echo "::error::every file was sent and orknux.ai has not published: $answer"; exit 1; }
+          curl -sS "https://orknux.ai/api/clients/shell/latest?platform=linux-x64" | jq .
+          echo "$version is offered through orknux.ai"
