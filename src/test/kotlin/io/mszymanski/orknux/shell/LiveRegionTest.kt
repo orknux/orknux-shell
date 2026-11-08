@@ -40,6 +40,29 @@ class LiveRegionTest {
     }
 
     @Test
+    fun `a session followed shows its own phase in place of this chat's turn, and nothing once it has finished`() {
+        val screen = Screen()
+        var now = 0L
+        val region = LiveRegion(screen::sink, { 80 }, ansi = true, theme = theme, clock = { now })
+        region.phase("thinking", "Thinking")
+        region.start { listOf("› type to queue") }
+        region.focused = true
+        region.focusPhase("call:3", "Running http_get: https://www.iana.org", since = -4_000)
+        val lines = region.lines().map { stripAnsi(it) }
+        assertTrue(lines.any { it.contains("Running http_get: https://www.iana.org · 4s") }, lines.toString())
+        assertFalse(lines.any { it.contains("Thinking") }, "this chat's own phase is not drawn while another is followed: $lines")
+        assertTrue(lines.last().contains("type to queue"))
+
+        region.focusPhase(null, null)
+        val finished = region.lines().map { stripAnsi(it) }
+        assertFalse(finished.any { it.contains("Running") || it.contains("Thinking") }, "a finished session draws no phase: $finished")
+
+        region.focused = false
+        assertTrue(region.lines().map { stripAnsi(it) }.any { it.contains("Thinking") }, "back on this chat, its own phase again")
+        region.stop()
+    }
+
+    @Test
     fun `a region of several rows climbs back over all of them`() {
         val screen = Screen()
         val region = LiveRegion(screen::sink, { 80 }, ansi = true, theme = theme, clock = { 0 })

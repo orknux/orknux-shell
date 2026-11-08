@@ -77,11 +77,28 @@ class LiveRegion(
         private set
     private val held = mutableListOf<String>()
 
-    /** While another session is followed, the line saying what it is doing; null for this chat's own turn. */
-    @Volatile var focus: (() -> String)? = null
+    /** Whether another session is on the screen, followed: its phase is drawn, and this chat's turn is not. */
+    @Volatile var focused = false
+    private var focusKey: String? = null
+    private var focusText: String? = null
+    private var focusStarted = 0L
 
-    /** Whether the session followed has finished, so its line stops turning. */
-    @Volatile var focusDone: (() -> Boolean)? = null
+    /**
+     * What the followed session is at - "Thinking", "Running http_get: …" -
+     * with its clock running from when [key] last changed, or from [since]
+     * where the server says when the stretch began. Null for nothing: it has
+     * finished, or is between things.
+     */
+    fun focusPhase(key: String?, text: String?, since: Long? = null) = synchronized(lock) {
+        if (key != focusKey) {
+            focusKey = key
+            focusStarted = since ?: clock()
+        } else if (since != null && since < focusStarted) {
+            focusStarted = since
+        }
+        focusText = text
+        redraw()
+    }
 
     /** The thread whose lines go out at once while the region is set aside; the rest are held. */
     @Volatile private var through: Thread? = null
@@ -215,9 +232,10 @@ class LiveRegion(
         if (!afterBlank) out += ""
         val spinner = theme.accent(frames[frame % frames.size]) + " "
         // Another session followed: what it is doing, in place of this chat's turn, which goes on unseen meanwhile.
-        focus?.let { f ->
-            // A spinner only while the session followed is working; finished, a tick and nothing turning.
-            out += (if (focusDone?.invoke() == true) theme.success("✓ ") else spinner) + f()
+        // Another session followed: its own phase line, drawn as this chat's would be, in place of this chat's turn,
+        // which goes on unseen meanwhile. Nothing where it has finished, as a finished turn draws nothing.
+        if (focused) {
+            focusText?.let { out += spinner + it + theme.muted(" · ${(clock() - focusStarted) / 1000}s") }
             asking?.let { out += it }
             out += below()
             return out.map { clip(it, w) }

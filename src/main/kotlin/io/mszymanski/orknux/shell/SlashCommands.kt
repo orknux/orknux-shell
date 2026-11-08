@@ -25,6 +25,7 @@ object SlashCommands {
         SlashCommand("workspace", "[name]", "List workspaces, or switch to one"),
         SlashCommand("mode", "[auto|ask|plan]", "Cycle or set the mode (also Shift+Tab)"),
         SlashCommand("theme", "[<name> #rrggbb|reset]", "Choose a colour and change it, or set one directly"),
+        SlashCommand("config", "[<shortcut> ctrl+<letter>|default]", "The shortcuts: choose one and press its new key, or set one directly"),
         SlashCommand("rules", null, "Show the rules for local commands"),
         SlashCommand("orkx-web-chat", null, "Open this chat in Orknux in the browser"),
         SlashCommand("orkx-web-session", null, "Open this conversation's session log in the browser"),

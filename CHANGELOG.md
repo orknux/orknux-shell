@@ -4,6 +4,33 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.31
+
+### Added
+
+- `/config` shows the Shell's shortcuts - expand (Ctrl+O), sessions (Ctrl+T),
+  send now (Ctrl+S) - and changes one: choose it and press the new key, or
+  `/config send-now ctrl+g`; `/config send-now default` puts it back. Ctrl and
+  a letter only, and not one the terminal or the line already uses. Kept in
+  the configuration file, and every hint says the key that is set.
+
+### Changed
+
+- Sending into the running turn is Ctrl+S, not Alt+Enter, which is Windows
+  Terminal's full screen. The hint is beside what is queued, and the typing
+  line says where a message goes.
+- A followed session's live line is drawn as this chat's own: "Thinking ·
+  12s", "Running http_get: …", "Preparing a tool call: …", "Writing the
+  answer · 80 chars", from what the server says its model is doing - and
+  nothing once it has finished, as a finished turn draws nothing.
+
+### Fixed
+
+- A message queued while a subagent's session is on the screen goes to this
+  chat's main session, as it always did - and is now shown there: the screen
+  goes back to this chat as it is sent, rather than writing it under the
+  subagent's lines as if it had been sent to it.
+
 ## 1.0.30
 
 ### Fixed

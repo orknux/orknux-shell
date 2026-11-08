@@ -67,6 +67,8 @@ data class Config(
     val updateCheckedAt: Long? = null,
     /** The newest version that check found, so a day without asking still says it is out. */
     val updateLatest: String? = null,
+    /** The shortcuts set with /config, by action - `send-now` to `ctrl+s`; what is not here is its default. */
+    val keys: Map<String, String> = emptyMap(),
 ) {
     val signedIn: Boolean get() = server != null && (token != null || cookies.isNotEmpty())
 
@@ -91,6 +93,10 @@ data class Config(
         }
         val colours = root.putObject("theme")
         theme.toSortedMap().forEach { (k, v) -> colours.put(k, v) }
+        if (keys.isNotEmpty()) {
+            val bound = root.putObject("keys")
+            keys.toSortedMap().forEach { (k, v) -> bound.put(k, v) }
+        }
         user?.let { root.put("user", it) }
         token?.let { root.put("token", it) }
         if (cookies.isNotEmpty()) {
@@ -107,6 +113,8 @@ data class Config(
         fun fromJson(root: JsonNode): Config {
             val rules = root.get("commands")
             val theme = root.get("theme")?.takeIf { it.isObject }?.properties()
+                ?.mapNotNull { (k, v) -> if (v.isTextual) k to v.textValue() else null }?.toMap() ?: emptyMap()
+            val keys = root.get("keys")?.takeIf { it.isObject }?.properties()
                 ?.mapNotNull { (k, v) -> if (v.isTextual) k to v.textValue() else null }?.toMap() ?: emptyMap()
             val cookies = root.get("cookies")?.takeIf { it.isObject }?.properties()
                 ?.mapNotNull { (k, v) -> if (v.isTextual) k to v.textValue() else null }?.toMap() ?: emptyMap()
@@ -132,6 +140,7 @@ data class Config(
                 updates = root.get("updates")?.takeIf { it.isBoolean }?.booleanValue() ?: true,
                 updateCheckedAt = root.get("updateCheckedAt")?.takeIf { it.isNumber }?.asLong(),
                 updateLatest = root.str("updateLatest"),
+                keys = keys,
             )
         }
     }

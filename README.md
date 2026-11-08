@@ -57,8 +57,11 @@ orknux --version
 | `/review [--fix] [branch\|path]` | review the uncommitted changes, a branch, or a path, with git where the Shell runs |
 | `/goal <what> until <condition> [max <n>] [reviewer <model>]` | work at a goal, judged each iteration; `/goal`, `/goal stop` |
 | `/subagents [n]` | the agents this conversation asked, or read one |
+| `/sessions` (Ctrl+T) | every session of this chat - its own and its agents' - and follow one here as it works; Ctrl+T, Enter goes back |
 | `/effort [level\|default]` | the model's reasoning effort |
-| `/thinking [collapsed\|expanded\|hidden]` | read the last turn's thinking (also Ctrl+O), or set how it shows |
+| `/thinking [collapsed\|expanded\|hidden]` | how a turn's thinking shows; Ctrl+O expands every thought and tool call on the screen, and folds them again |
+| `/config [<shortcut> ctrl+<letter>\|default]` | the shortcuts - expand, sessions, send now - and change one |
+| `/orkx-web-chat`, `/orkx-web-session`, `/orkx-web-agent-settings` | open this chat, the session on the screen, or the agent's settings in the browser |
 | `/open <n>` | open a link of the last answer in the browser |
 | `/update` | install the newest Orknux Shell |
 | `/usage`, `/resume`, `/clear`, `/workspace`, `/mode`, `/theme`, `/rules`, `/help`, `/quit` | |
@@ -66,7 +69,9 @@ orknux --version
 Keys: Enter sends; Alt+Enter, Shift+Enter (where the terminal tells them
 apart) or a trailing `\` for a new line; Tab completes everything; Shift+Tab
 cycles the mode; Ctrl+C or Esc interrupts a turn (twice: stop waiting); Ctrl+D
-quits.
+quits. While the agent works, typing queues a message for when the turn ends,
+and Ctrl+S sends it into the turn now, where the agent reads it at its next
+step. Ctrl+O, Ctrl+T and Ctrl+S are `/config`'s to change.
 
 Under the input sits a status line - workspace, agent, mode, effort, a running
 goal, tokens in/out (cached) and cost, and whether the local-command door is

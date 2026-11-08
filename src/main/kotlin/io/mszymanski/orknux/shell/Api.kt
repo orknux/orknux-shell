@@ -6,6 +6,9 @@ data class Workspace(val id: String, val name: String, val commandMarker: String
 
 data class Agent(val id: String, val name: String, val description: String?, val enabled: Boolean, val skillCatalogs: List<String>, val hiddenSkills: List<String>)
 
+/** A session's model mid-write: a tool call being spelled out ([tool]), or its answer; reading the prompt first where the server says so. */
+data class SessionWriting(val tool: String?, val chars: Int, val since: Long?, val promptTotal: Long?, val promptCached: Long?, val promptProcessed: Long?)
+
 data class ClaudeCodeStatus(val available: Boolean, val reason: String?, val connected: Boolean)
 
 data class Chat(
@@ -134,6 +137,23 @@ class Api(val client: OrknuxClient) {
     fun messages(id: String): List<Message> =
         client.graphql("query ChatMessages(\$id: ID!) { chatMessages(id: \$id) { role content thinking thinkingMillis at } }", vars("id" to id))
             .list("chatMessages").map { Message(it.str("role") ?: "", it.str("content") ?: "", it.str("thinking"), it.long("thinkingMillis"), it.str("at")) }
+
+    /** What a session's model is writing this moment, as the server tracks it; null while it writes nothing. */
+    fun sessionWriting(id: String): SessionWriting? = runCatching {
+        client.graphql(
+            "query Writing(\$id: ID!) { llmSessionWriting(id: \$id) { tool chars since promptTotal promptCached promptProcessed } }",
+            vars("id" to id),
+        ).get("llmSessionWriting")?.let {
+            SessionWriting(
+                tool = it.str("tool"),
+                chars = (it.long("chars") ?: 0).toInt(),
+                since = it.str("since")?.let { at -> runCatching { java.time.OffsetDateTime.parse(at).toInstant().toEpochMilli() }.getOrNull() },
+                promptTotal = it.double("promptTotal")?.toLong(),
+                promptCached = it.double("promptCached")?.toLong(),
+                promptProcessed = it.double("promptProcessed")?.toLong(),
+            )
+        }
+    }.getOrNull()
 
     /** Leaves [text] for the turn running in the chat: its agent reads it at its next step, as the person speaking. */
     fun postDuringTurn(chatId: String, text: String) {

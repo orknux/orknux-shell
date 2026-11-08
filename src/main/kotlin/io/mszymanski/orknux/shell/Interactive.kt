@@ -204,7 +204,7 @@ class Interactive(
             theme.muted("Workspace ") + theme.text(workspace.name) + theme.muted(" · agent ") +
                 theme.text(agent?.name ?: "the one you last talked to") + theme.muted(" · mode ") + modeLabel(),
         )
-        say(theme.muted("/help for commands · @agent to ask another agent · Ctrl+O expands thoughts and tool calls · Ctrl+T sessions · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
+        say(theme.muted("/help for commands · @agent to ask another agent · ${keyName("details")} expands thoughts and tool calls · ${keyName("sessions")} sessions · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
         // A newer Shell is said here, with the rest of the welcome, rather than above the prompt whenever the look
         // came back. The look is given a moment; slower than that, the status bar says it once it knows.
         startingNews?.let { news ->
@@ -310,8 +310,7 @@ class Interactive(
         }
         val keys = r.keyMaps[LineReader.MAIN]!!
         keys.bind(Reference("orknux-cycle-mode"), "\u001b[Z")
-        keys.bind(Reference("orknux-thinking"), KeyMap.ctrl('O'))
-        keys.bind(Reference("orknux-sessions"), KeyMap.ctrl('T'))
+        bindShortcuts(r)
         // Ctrl+L clears as the Shell draws, the prompt back at the foot over the status bar: the line editor's own
         // left it on the top row, and everything after hung from there with the screen empty under it.
         r.widgets["orknux-clear-screen"] = org.jline.reader.Widget { repaint(); true }
@@ -479,6 +478,24 @@ class Interactive(
         return loaded
     }
 
+    /** The shortcuts set with /config bound at the prompt; the ones they replace are given back to the line editor. */
+    private var bound = emptyMap<String, Int>()
+    private var defaultMain: Map<String, org.jline.reader.Binding>? = null
+
+    private fun bindShortcuts(r: LineReader) {
+        val keys = r.keyMaps[LineReader.MAIN] ?: return
+        // What the line editor had on each key before the Shell took any, so a key given up goes back to it.
+        if (defaultMain == null) defaultMain = HashMap(keys.boundKeys)
+        bound.values.forEach { code ->
+            val old = code.toChar().toString()
+            defaultMain?.get(old)?.let { keys.bind(it, old) } ?: keys.unbind(old)
+        }
+        val now = mapOf("details" to keyOf("details"), "sessions" to keyOf("sessions"))
+        keys.bind(Reference("orknux-thinking"), now.getValue("details").toChar().toString())
+        keys.bind(Reference("orknux-sessions"), now.getValue("sessions").toChar().toString())
+        bound = now
+    }
+
     // ---- the loop ----------------------------------------------------------------------------
 
     private fun loop() {
@@ -541,6 +558,8 @@ class Interactive(
                 // What was written while that turn ran, sent now, each as if typed at the prompt.
                 while (queued.isNotEmpty()) {
                     val next = queued.removeAt(0)
+                    // It goes to this chat's main session and starts a turn there: shown there, not in a session followed.
+                    if (viewing != Transcript.MAIN) showMain()
                     userLines(next).forEach(::say)
                     lastBlank = false
                     if (!said(next)) return
@@ -951,9 +970,11 @@ class Interactive(
     /** Under the spinner: what is queued, the line being typed, and the status line. */
     private fun below(): List<String> {
         val typing = buildList {
-            queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
+            queued.forEachIndexed { i, text ->
+                add(theme.muted("  queued · ") + theme.text(text) + (if (i == queued.lastIndex && ahead.isEmpty()) theme.muted(" · ${keyName("send-now")} sends now") else ""))
+            }
             if (queued.isNotEmpty() && region.active) add("")
-            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends · Alt+Enter sends it now" else "▏"))
+            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) typingHint() else "▏"))
             if (region.active && aheadChoices.isNotEmpty()) {
                 val at = aheadAt.coerceIn(0, aheadChoices.lastIndex)
                 val runs = SlashCommands.parse(aheadChoices[at].value.trim())?.name in WHILE_WORKING
@@ -963,6 +984,12 @@ class Interactive(
         // A blank line between what is happening and what is being written.
         if (status != null) return listOf("") + typing
         return listOf("") + typing + listOfNotNull(rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())
+    }
+
+    /** What the empty typing line says: where a message goes - this chat's main session, said while another is on the screen - and how to send it now. */
+    private fun typingHint(): String {
+        val to = if (viewing != Transcript.MAIN) " to ${conversation.agent?.name ?: "the main agent"} (main)" else ""
+        return "type to queue a message$to for when this turn ends" + (if (queued.isEmpty()) " · ${keyName("send-now")} sends it now" else "")
     }
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
@@ -988,12 +1015,20 @@ class Interactive(
         try {
             while (phase == Phase.TURN && !Thread.currentThread().isInterrupted) {
                 approvals.poll()?.let { ask(it); continue }
-                val c = input.read(50)
-                if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
+                val read = input.read(50)
+                if (read != NonBlockingReader.READ_EXPIRED) Trace.log("key $read")
+                // The configurable ones first: a constant cannot be a branch of a `when` that /config changes.
+                val c = when (read) {
+                    keyOf("details") -> DETAILS
+                    keyOf("sessions") -> SESSIONS
+                    keyOf("send-now") -> SEND_NOW
+                    else -> read
+                }
                 when (c) {
                     3 -> interruptTurn()
-                    15 -> toggleDetails()
-                    SESSIONS_KEY -> {
+                    DETAILS -> toggleDetails()
+                    SEND_NOW -> sendNow()
+                    SESSIONS -> {
                         region.pause()
                         try {
                             sessionsByKey()
@@ -1005,8 +1040,6 @@ class Interactive(
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) {
                         if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else interruptTurn()
                     } else when (sequence(input)) {
-                        // Alt+Enter: into the turn now - what is typed, or with nothing typed, what is queued.
-                        "\r", "\n" -> sendNow()
                         "[A", "OA" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt - 1).coerceAtLeast(0); region.redraw() }
                         "[B", "OB" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt + 1).coerceAtMost(aheadChoices.lastIndex); region.redraw() }
                     }
@@ -1073,7 +1106,7 @@ class Interactive(
     }
 
     /**
-     * Alt+Enter while the agent works: the line typed - or, with nothing
+     * The send-now key (Ctrl+S) while the agent works: the line typed - or, with nothing
      * typed, every message queued - left for the running turn, which reads it
      * at its next step as the person speaking, rather than after the turn ends.
      * A chat whose answerer has no steps to read it between - My Claude Code, a
@@ -1132,8 +1165,14 @@ class Interactive(
     private var aheadDismissed: String? = null
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
-    /** What Ctrl+O does now, said on the spinner's line. */
-    private fun detailsHint(): String = if (unfolded) "Ctrl+O fold" else "Ctrl+O expand"
+    /** What the details key does now, said on the spinner's line. */
+    private fun detailsHint(): String = keyName("details") + if (unfolded) " fold" else " expand"
+
+    /** The byte [action]'s shortcut arrives as: the one set with /config, or its default. */
+    private fun keyOf(action: String): Int = Keys.code(Keys.specFor(action, config.keys))!!
+
+    /** [action]'s shortcut as a person reads it: Ctrl+O. */
+    private fun keyName(action: String): String = Keys.label(Keys.specFor(action, config.keys))
 
     /**
      * The last turn's thinking, read in a page of its own on the terminal's
@@ -1516,7 +1555,7 @@ class Interactive(
             return listOf(
                 theme.text(v.agent) + theme.muted(" (followed)"),
                 theme.muted("↑${TurnRenderer.tokens(v.inputTokens)} ↓${TurnRenderer.tokens(v.outputTokens)}") + (v.cost?.let { theme.muted(" · $it") } ?: ""),
-                theme.muted("Ctrl+T, Enter: back to main"),
+                theme.muted("${keyName("sessions")}, Enter: back to main"),
             ).joinToString(theme.muted(" · ")) to theme.muted("workspace ") + theme.text(conversation.workspace.name)
         }
         val c = conversation
@@ -1536,7 +1575,7 @@ class Interactive(
             // The cost only where the model has a price; a local model's has none, and a dash read as a glitch.
             u.cost?.let { theme.muted(TurnRenderer.cost(it)) },
             c.speeds.said()?.let { theme.muted(it) },
-            sessionCount.takeIf { it > 0 }?.let { theme.text("$it subagent" + (if (it == 1) "" else "s")) + theme.muted(" Ctrl+T") },
+            sessionCount.takeIf { it > 0 }?.let { theme.text("$it subagent" + (if (it == 1) "" else "s")) + theme.muted(" " + keyName("sessions")) },
             device,
         ).joinToString(theme.muted(" · "))
         // The workspace is in the bar at the top of the window, where one is rather than what is going on.
@@ -1586,6 +1625,7 @@ class Interactive(
             "skill" -> skill(argument)
             "resume" -> resume(argument)
             "theme" -> theme(argument)
+            "config" -> configure(argument)
             "rules" -> showRules()
             "attach" -> if (argument == null) listAttachments() else attach(PastedPaths.tokens(slash.argument) ?: throw OrknuxException("A quote is not closed."))
             "detach" -> detach(argument)
@@ -1649,7 +1689,7 @@ class Interactive(
         val title = "Sessions of this chat" + theme.muted(" · ${found.size}, $active active")
         val shown = found.indexOfFirst { if (reading == null) it.kind == MAIN else it.session.sessionId == reading }.coerceAtLeast(0)
         // Following another, the highlight starts on main - Ctrl+T, Enter is the way back; the one followed stays marked.
-        val chosen = chooseFrom(title, found, if (reading != null) 0 else shown, closeKey = SESSIONS_KEY) { f ->
+        val chosen = chooseFrom(title, found, if (reading != null) 0 else shown, closeKey = keyOf("sessions")) { f ->
             val s = f.session
             (if (s.active) theme.success("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
                 (if (found.indexOf(f) == shown) theme.accent(" · reading") else "") +
@@ -1682,8 +1722,8 @@ class Interactive(
         reading = null
         viewing = Transcript.MAIN
         viewed = null
-        region.focus = null
-        region.focusDone = null
+        region.focused = false
+        region.focusPhase(null, null)
         repaint()
         footer()
     }
@@ -1700,17 +1740,12 @@ class Interactive(
         reading = s.sessionId
         viewing = s.sessionId
         viewed = s
-        region.focusDone = { viewed?.active == false }
-        region.focus = {
-            val v = viewed
-            theme.accent(s.agent) + theme.muted(" (${found.kind}) · ") +
-                (if (v?.active == true) theme.text(followedDoing ?: "working") else theme.muted("finished")) +
-                theme.dim(theme.muted(" · Ctrl+T sessions"))
-        }
+        region.focused = true
+        region.focusPhase("thinking", theme.thinking("Thinking"))
         repaint()
         if (followed[s.sessionId] == null) {
             say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
-            say(theme.muted("What you write goes to this chat's main session; Ctrl+T or /sessions goes back to it."))
+            say(theme.muted("What you write goes to this chat's main session; ${keyName("sessions")} or /sessions goes back to it."))
             say("")
             followed[s.sessionId] = 0
         }
@@ -1732,8 +1767,8 @@ class Interactive(
                         if (all.size > from && viewing == s.sessionId) {
                             all.drop(from).forEach { line -> sessionLine(line, markdown).forEach { (text, view) -> say(text, view, s.sessionId) } }
                             followed[s.sessionId] = all.size
-                            followedDoing = all.lastOrNull()?.let { doing(it) }
                         }
+                        if (viewing == s.sessionId) followedPhase(s.sessionId, all.lastOrNull(), all.size)
                     }
                     api.session(s.sessionId)?.let { viewed = it }
                     footer()
@@ -1747,13 +1782,35 @@ class Interactive(
         }
     }
 
-    /** What a followed session is at, from the last thing it did. */
-    private fun doing(line: SessionLine): String = when (line.kind) {
-        "TOOL" -> "used " + (line.actor?.takeIf { it.isNotBlank() } ?: "a tool")
-        "THINKING" -> "thinking"
-        "AGENT" -> "writing"
-        "USER" -> "reading the question"
-        else -> "working"
+    /**
+     * The followed session's live line, as this chat's turn would say it: what
+     * the server says its model is writing - the prompt being read, a tool call
+     * being spelled out, the answer - and, where it writes nothing, the last
+     * thing in its transcript: a tool called and not yet answered is running,
+     * anything else is thinking. Nothing once it has finished.
+     */
+    private fun followedPhase(sessionId: String, last: SessionLine?, lines: Int) {
+        val writing = api.sessionWriting(sessionId)
+        val finished = viewed?.active == false || (writing == null && last?.kind == "AGENT")
+        val w = width()
+        when {
+            finished -> region.focusPhase(null, null)
+            writing?.promptTotal != null && writing.promptTotal > 0 -> {
+                val done = writing.promptProcessed ?: 0
+                region.focusPhase(
+                    "reading", "Reading the prompt ${done * 100 / writing.promptTotal}%" +
+                        theme.muted(" · ${TurnRenderer.tokens(writing.promptTotal)} tokens, ${TurnRenderer.tokens(writing.promptCached ?: 0)} cached"),
+                    writing.since,
+                )
+            }
+            writing?.tool != null -> region.focusPhase("writing:${writing.tool}", "Preparing a tool call: " + theme.accent(writing.tool) + theme.muted(" · ${writing.chars} chars"), writing.since)
+            writing != null && writing.chars > 0 -> region.focusPhase("writing-answer", "Writing the answer" + theme.muted(" · ${writing.chars} chars"), writing.since)
+            last?.kind == "TOOL" && last.result == null -> {
+                val tool = last.actor?.takeIf { it.isNotBlank() } ?: "tool"
+                region.focusPhase("call:$lines", "Running " + theme.accent(tool) + ": " + theme.muted(TurnRenderer.argumentSummary(last.content, w - tool.length - 24)))
+            }
+            else -> region.focusPhase("thinking", theme.thinking("Thinking"))
+        }
     }
 
     /** The session on the screen: [Transcript.MAIN] for this chat's own, or the id of one followed from /sessions. */
@@ -1761,7 +1818,6 @@ class Interactive(
 
     /** The followed session as last read, for the status bar and the live block. */
     @Volatile private var viewed: Subagent? = null
-    @Volatile private var followedDoing: String? = null
 
     /** How many of each followed session's lines have been written: -1 for a side chat whose history is. */
     private val followed = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -1876,12 +1932,12 @@ class Interactive(
         say(theme.bold("Keys"))
         listOf(
             "Enter" to "send - while the agent works, queue it for when the turn ends",
-            "Alt+Enter while the agent works" to "send it now: the agent reads it at its next step",
+            "${keyName("send-now")} while the agent works" to "send it now: the agent reads it at its next step",
             "Alt+Enter, Shift+Enter, or \\ at the end" to "a new line",
             "Tab" to "complete commands, agents, workspaces, skills and files",
             "Shift+Tab" to "switch mode: auto, ask, plan",
-            "Ctrl+O" to "expand thoughts and tool calls, and fold them again",
-            "Ctrl+T" to "this chat's sessions - its own and its agents'",
+            keyName("details") to "expand thoughts and tool calls, and fold them again",
+            keyName("sessions") to "this chat's sessions - its own and its agents'",
             "Ctrl+L" to "clear the screen",
             "Ctrl+C / Esc" to "interrupt the answer (twice: stop waiting)",
             "Ctrl+D" to "quit",
@@ -2372,6 +2428,67 @@ class Interactive(
     }
 
     /**
+     * The shortcuts: a list to choose one from and press its new key, applied
+     * at once and kept in the configuration. `/config send-now ctrl+s` sets one
+     * directly, `/config send-now default` puts it back. Only Ctrl+letter, and
+     * not a letter the terminal or the line already means something by.
+     */
+    private fun configure(argument: String?) {
+        val words = argument?.trim()?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }.orEmpty()
+        if (words.size >= 2) {
+            val action = Keys.ACTIONS.firstOrNull { it.name == words[0].lowercase() }
+                ?: throw OrknuxException("No shortcut \"${words[0]}\": they are " + Keys.ACTIONS.joinToString(", ") { it.name } + ".")
+            if (words[1].lowercase() in setOf("default", "reset")) {
+                setKey(action.name, null)
+                return
+            }
+            setKey(action.name, words.drop(1).joinToString("+").lowercase())
+            return
+        }
+        if (!region.ansi) {
+            Keys.ACTIONS.forEach { say("  " + theme.accent(it.name.padEnd(9)) + theme.text(Keys.label(Keys.specFor(it.name, config.keys)).padEnd(8)) + theme.muted(it.what)) }
+            say(theme.muted("/config <shortcut> ctrl+<letter> sets one; /config <shortcut> default puts it back."))
+            return
+        }
+        val chosen = chooseFrom("Shortcuts", Keys.ACTIONS) { a ->
+            theme.text(a.name.padEnd(9)) + theme.accent(Keys.label(Keys.specFor(a.name, config.keys)).padEnd(8)) + theme.muted(a.what)
+        } ?: return
+        say(theme.muted("Press the new key for ") + theme.text(chosen.name) + theme.muted(" - Ctrl and a letter; Esc keeps ${Keys.label(Keys.specFor(chosen.name, config.keys))}."))
+        val saved = terminal.enterRawMode()
+        val pressed = try {
+            terminal.reader().read(0L)
+        } finally {
+            terminal.attributes = saved
+        }
+        if (pressed == 27 || pressed < 0) {
+            say(theme.muted("Kept."))
+            return
+        }
+        val spec = Keys.specOf(pressed) ?: throw OrknuxException("That is not Ctrl and a letter; nothing was changed.")
+        setKey(chosen.name, spec)
+    }
+
+    /** One shortcut changed, or put back with null: checked, kept, bound at the prompt, and said. */
+    private fun setKey(action: String, spec: String?) {
+        if (spec != null) {
+            if (Keys.code(spec) == null) {
+                throw OrknuxException(
+                    "\"$spec\" cannot be a shortcut: only Ctrl and a letter, and not one the terminal or the line already " +
+                        "uses (Ctrl+C, D, H, I, J, L, M, Q, U, Z). Nothing was changed.",
+                )
+            }
+            Keys.ACTIONS.firstOrNull { it.name != action && Keys.specFor(it.name, config.keys) == spec }?.let {
+                throw OrknuxException("${Keys.label(spec)} is ${it.name} already; give one of them another key first. Nothing was changed.")
+            }
+        }
+        config = store.update { it.copy(keys = if (spec == null) it.keys - action else it.keys + (action to spec)) }
+        if (::reader.isInitialized) bindShortcuts(reader)
+        if (::region.isInitialized) region.thinkingHint = detailsHint()
+        footer()
+        say(theme.text(action) + theme.muted(" is ") + theme.accent(Keys.label(Keys.specFor(action, config.keys))) + theme.muted(if (spec == null) " again, its default." else " now; kept in ${store.path}."))
+    }
+
+    /**
      * The colours: a list to choose one from and give it a new value, applied
      * at once and kept in the configuration. `/theme accent #5b8def` sets one
      * directly, `/theme reset` puts them all back; off a terminal it lists them.
@@ -2488,8 +2605,10 @@ class Interactive(
             "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help",
         )
 
-        /** Ctrl+T: the sessions of this chat, opened and closed again. */
-        const val SESSIONS_KEY = 20
+        /** What the configurable keys become inside the turn's key loop, below anything a key can be. */
+        const val DETAILS = -100
+        const val SESSIONS = -101
+        const val SEND_NOW = -102
         const val SESSION_COUNT_MILLIS = 5_000L
         const val LIVE_MILLIS = 4_000L
         const val FOLLOW_MILLIS = 1_500L
