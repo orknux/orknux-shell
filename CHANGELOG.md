@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.14
+
+### Fixed
+
+- A blank line between a command typed and what it answers, for every
+  command, as between a message and its answer; between a heading and the
+  list to choose from under it (/sessions, /resume, /workspace, /agent and
+  the rest); and between /help's commands and its keys.
+
 ## 1.0.13
 
 ### Changed

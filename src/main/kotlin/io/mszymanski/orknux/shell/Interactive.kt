@@ -466,6 +466,8 @@ class Interactive(
     private fun said(text: String): Boolean {
         SlashCommands.parse(text)?.let { slash ->
             if (slash.name == "quit") return false
+            // A blank line between the command typed and what it answers, as between a message and its answer.
+            say("")
             command(slash)
             say("")
             return true
@@ -476,6 +478,7 @@ class Interactive(
         }
         SlashCommands.unknown(text)?.let { word ->
             val near = SlashCommands.nearest(word)
+            say("")
             say(theme.warning("Unknown command /$word.") + theme.muted(near?.let { " Did you mean /$it? " } ?: " ") + theme.muted("/help lists them; nothing was sent."))
             return true
         }
@@ -680,6 +683,8 @@ class Interactive(
             if (answer.isEmpty()) return null
             return answer.split(',').mapNotNull { it.trim().toIntOrNull()?.minus(1) }.filter { it in rows.indices }.toSet().ifEmpty { null }
         }
+        // A blank line between what came before - a heading, the command typed - and the list.
+        say("")
         val picker = Picker(
             sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
             key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) },
@@ -1434,6 +1439,7 @@ class Interactive(
         say(theme.bold("Commands"))
         SlashCommands.ALL.forEach { say("  " + theme.accent("/" + it.name) + (it.argument?.let { a -> theme.muted(" $a") } ?: "") + theme.muted("  " + it.summary)) }
         say("  " + theme.accent("@agent") + theme.muted(" <message>  Ask another agent, in a side conversation, without switching"))
+        say("")
         say(theme.bold("Keys"))
         listOf(
             "Enter" to "send",
@@ -1878,6 +1884,8 @@ class Interactive(
             if (answer.isEmpty()) return null
             return SlashCommands.pick(items, answer) { stripAnsi(label(it)) }
         }
+        // A blank line between what came before - a heading, the command typed - and the list.
+        say("")
         val picker = Picker(
             sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
             key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) },
