@@ -4,6 +4,20 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.29
+
+### Fixed
+
+- A followed session is drawn as this chat's own: a blank line between its
+  steps, a tool call on one line - "✓ http_get …" - and Ctrl+O writing each
+  out whole, rather than "● name {json}" lines run together.
+- /sessions and Ctrl+T leave nothing behind: "Sessions of this chat" is the
+  list's own title, and goes with it.
+- After the screen is written again - Ctrl+O, a resize, going back to this
+  chat - the live block keeps its blank line above it, and lines that came
+  while a list was open are not written twice.
+- A followed session that has finished shows a tick, not a spinner.
+
 ## 1.0.28
 
 ### Fixed

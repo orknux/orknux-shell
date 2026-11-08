@@ -80,6 +80,9 @@ class LiveRegion(
     /** While another session is followed, the line saying what it is doing; null for this chat's own turn. */
     @Volatile var focus: (() -> String)? = null
 
+    /** Whether the session followed has finished, so its line stops turning. */
+    @Volatile var focusDone: (() -> Boolean)? = null
+
     /** The thread whose lines go out at once while the region is set aside; the rest are held. */
     @Volatile private var through: Thread? = null
 
@@ -93,6 +96,16 @@ class LiveRegion(
         }
         paused = true
     }
+
+    /** The last line written above it, by something other than [line]: whether it ends in a blank decides its spacing. */
+    fun afterLine(text: String) = synchronized(lock) { afterBlank = stripAnsi(text).isBlank() }
+
+    /**
+     * The screen was written again from the record, which holds every line said
+     * - those held while the region was set aside too - so they are not written
+     * a second time when it comes back.
+     */
+    fun dropHeld() = synchronized(lock) { held.clear() }
 
     /** The screen was cleared under it: nothing of it is on it any more, so nothing is erased before it is drawn again. */
     fun forget() = synchronized(lock) { drawnRows = 0 }
@@ -203,7 +216,8 @@ class LiveRegion(
         val spinner = theme.accent(frames[frame % frames.size]) + " "
         // Another session followed: what it is doing, in place of this chat's turn, which goes on unseen meanwhile.
         focus?.let { f ->
-            out += spinner + f()
+            // A spinner only while the session followed is working; finished, a tick and nothing turning.
+            out += (if (focusDone?.invoke() == true) theme.success("✓ ") else spinner) + f()
             asking?.let { out += it }
             out += below()
             return out.map { clip(it, w) }

@@ -1416,6 +1416,9 @@ class Interactive(
             w.print("\u001b[H")
             lines.forEach { w.print(it + "\r\n") }
             region.forget()
+            region.dropHeld()
+            // So the live block puts its blank line under the last one written, as it does after any other line.
+            region.afterLine(lines.lastOrNull().orEmpty())
             w.flush()
         }
         synchronized(out) { if (region.active) region.exclusive(draw) else draw() }
@@ -1634,10 +1637,11 @@ class Interactive(
         }
         // "Active" as the server means it - an agent at work in it now, or a moment ago - not a claim that a turn is running.
         val active = found.count { it.session.active }
-        say(theme.bold("Sessions of this chat") + theme.muted(" · ${found.size}, $active active"))
+        // The count in the list's own title: written as a line, it stayed in the conversation after the list was gone.
+        val title = "Sessions of this chat" + theme.muted(" · ${found.size}, $active active")
         val shown = found.indexOfFirst { if (reading == null) it.kind == MAIN else it.session.sessionId == reading }.coerceAtLeast(0)
         // Following another, the highlight starts on main - Ctrl+T, Enter is the way back; the one followed stays marked.
-        val chosen = chooseFrom("Sessions", found, if (reading != null) 0 else shown, closeKey = SESSIONS_KEY) { f ->
+        val chosen = chooseFrom(title, found, if (reading != null) 0 else shown, closeKey = SESSIONS_KEY) { f ->
             val s = f.session
             (if (s.active) theme.success("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
                 (if (found.indexOf(f) == shown) theme.accent(" · reading") else "") +
@@ -1671,6 +1675,7 @@ class Interactive(
         viewing = Transcript.MAIN
         viewed = null
         region.focus = null
+        region.focusDone = null
         repaint()
         footer()
     }
@@ -1687,6 +1692,7 @@ class Interactive(
         reading = s.sessionId
         viewing = s.sessionId
         viewed = s
+        region.focusDone = { viewed?.active == false }
         region.focus = {
             val v = viewed
             theme.accent(s.agent) + theme.muted(" (${found.kind}) · ") +
@@ -1716,7 +1722,7 @@ class Interactive(
                         val all = api.sessionLines(s.sessionId, FOLLOW_LINES)
                         val from = followed[s.sessionId] ?: 0
                         if (all.size > from && viewing == s.sessionId) {
-                            all.drop(from).forEach { line -> sessionLine(line, markdown).forEach { say(it, owner = s.sessionId) } }
+                            all.drop(from).forEach { line -> sessionLine(line, markdown).forEach { (text, view) -> say(text, view, s.sessionId) } }
                             followed[s.sessionId] = all.size
                             followedDoing = all.lastOrNull()?.let { doing(it) }
                         }
@@ -2157,17 +2163,36 @@ class Interactive(
     /** A subagent's session as a transcript: what it was asked, its tool calls folded, its thinking folded, its answers. */
     private fun printSession(sessionId: String) {
         val markdown = Markdown(theme, { width() }, links)
-        api.sessionLines(sessionId).forEach { line -> sessionLine(line, markdown).forEach { say(it) } }
+        api.sessionLines(sessionId).forEach { line -> sessionLine(line, markdown).forEach { (text, view) -> say(text, view) } }
     }
 
-    /** One event of a session as the screen shows it. */
-    private fun sessionLine(line: SessionLine, markdown: Markdown): List<String> = when (line.kind) {
-        "USER" -> userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3))
-        "AGENT" -> markdown.render(line.content).removeSuffix("\n").split('\n')
-        "TOOL" -> listOf(theme.success("●") + " " + theme.bold(line.actor?.takeIf { it.isNotBlank() } ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20))) +
-            listOfNotNull(line.result?.let { "  " + theme.muted("⎿ " + TurnRenderer.resultSummary(it, width() - 6)) })
-        "THINKING" -> TurnRenderer.fold(ThinkingBlock(line.content, -1), "collapsed", theme, width())
-        else -> emptyList()
+    /**
+     * One event of a session as the screen shows it, drawn as this chat's own
+     * turn draws it: a blank line before it, a thought folded to a line and a
+     * tool call to one - "✓ http_get …" - each written out whole under Ctrl+O.
+     * Folded first, then whole: [View] says which the screen shows.
+     */
+    private fun sessionLine(line: SessionLine, markdown: Markdown): List<Pair<String, View>> {
+        val w = width()
+        fun both(lines: List<String>) = listOf("" to View.BOTH) + lines.map { it to View.BOTH }
+        return when (line.kind) {
+            "USER" -> both(userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), w * 3)))
+            "AGENT" -> both(markdown.render(line.content).removeSuffix("\n").split('\n'))
+            "TOOL" -> {
+                val tool = line.actor?.takeIf { it.isNotBlank() } ?: "tool"
+                val result = line.result ?: ""
+                listOf("" to View.BOTH) +
+                    (TurnRenderer.calledLine(theme, tool, line.content, result, false, null, w) to View.FOLDED) +
+                    TurnRenderer.detailLines(listOf(Detail.Tool(tool, line.content, result, false, null)), theme, w)
+                        .dropLastWhile { it.isEmpty() }.map { it to View.FULL }
+            }
+            "THINKING" -> {
+                val block = ThinkingBlock(line.content, -1)
+                listOf("" to View.BOTH) + TurnRenderer.fold(block, "collapsed", theme, w).map { it to View.FOLDED } +
+                    TurnRenderer.fold(block, "expanded", theme, w).map { it to View.FULL }
+            }
+            else -> emptyList()
+        }
     }
 
     // ---- goals -------------------------------------------------------------------------------
