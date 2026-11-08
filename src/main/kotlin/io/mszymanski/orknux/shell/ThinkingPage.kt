@@ -17,7 +17,8 @@ class ThinkingPage(
 ) {
     fun show() {
         var top = 0
-        sink(ALTERNATE_ON + LiveRegion.HIDE_CURSOR)
+        // The whole window for the page: the conversation's scrolling area, which keeps the bars, is not this screen's.
+        sink(ALTERNATE_ON + "\u001b[r" + LiveRegion.HIDE_CURSOR)
         try {
             while (true) {
                 val height = (rows() - 2).coerceAtLeast(1)

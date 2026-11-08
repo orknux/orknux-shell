@@ -89,6 +89,12 @@ class Interactive(
             theme = theme,
             unicode = LiveRegion.unicodeFor(terminal.encoding()?.name()),
         )
+        // The top bar's rows, and the transcript starting under them.
+        if (drawable) {
+            header()
+            terminal.writer().print("\u001b[${HEADER_ROWS + 1};1H")
+            terminal.writer().flush()
+        }
         terminal.handle(Terminal.Signal.INT) { if (phase == Phase.TURN) interruptTurn() }
         terminal.handle(Terminal.Signal.WINCH) {
             if (region.active) region.redraw() else {
@@ -120,6 +126,8 @@ class Interactive(
             device.stop()
             runCatching { status?.update(emptyList()) }
             runCatching { status?.close() }
+            // The whole window scrolls again, as it did before: the top bar's margin given back.
+            if (drawable) runCatching { terminal.writer().print("\u001b7\u001b[r\u001b8"); terminal.writer().flush() }
             runCatching { reader.history.save() }
         }
         return 0
@@ -186,7 +194,7 @@ class Interactive(
         }
         val historyFile = store.path.resolveSibling("orknux-shell.history")
         // What LineReaderBuilder.build() does, on a reader that can take its completion list away again.
-        val r = ShellLineReader(terminal).apply {
+        val r = ShellLineReader(terminal) { footer() }.apply {
             setHistory(org.jline.reader.impl.history.DefaultHistory())
             setParser(parser)
             setCompleter(completer())
@@ -806,6 +814,8 @@ class Interactive(
                 key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) }).show()
         } finally {
             terminal.attributes = saved
+            // The page used the whole window; the bars are pinned again for the conversation's screen.
+            footer()
         }
     }
 
@@ -1008,14 +1018,14 @@ class Interactive(
 
     @Volatile private var lastBlank = true
 
+    private val startedAt = System.currentTimeMillis()
+
     /**
-     * The bar's height, from the window's width alone: one row where a wide
-     * window has room for everything, the workspace on a row of its own above
-     * a narrower one's. Never from what the bar says, which grows as a chat
-     * goes on - JLine's status cannot change height under text without losing
-     * where the cursor is, so it changes only when the window does.
+     * The status bar's height: its rule and its row. Fixed, since JLine's status
+     * cannot change height under text without losing where the cursor is; the
+     * workspace is in the bar at the top of the window instead.
      */
-    private fun barRows(): Int = if (width() >= WIDE_BAR) 2 else 4
+    private fun barRows(): Int = 2
 
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
@@ -1028,14 +1038,13 @@ class Interactive(
         val st = status ?: return
         // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
         val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
-        val (left, right) = statusParts()
-        // On one row while it fits, the workspace at its right end; where it does not, the workspace on a row of its
-        // own above, with a rule between, rather than cut off.
-        val bar = if (barRows() == 2) listOf(rule, " " + oneRow(left, right)) else listOf(rule, " $right", rule, " $left")
-        val lines = bar.take(1) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + bar.drop(1)
+        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + (" " + statusParts().first)
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
+                // JLine sets the scrolling area from the top of the window each time it draws its bar: the top bar is
+                // pinned again after it, or the transcript would scroll it away.
+                header(lines.size)
             }
         }
         synchronized(out) { if (::region.isInitialized) region.exclusive(draw) else draw() }
@@ -1047,6 +1056,30 @@ class Interactive(
 
     private fun statusText(): String = statusParts().let { (left, right) -> oneRow(left, right) }
 
+    /**
+     * The bar at the top of the window: the workspace, and the server it is
+     * on, over a rule - kept there with a scrolling area that starts under it,
+     * as the status bar is kept at the foot with one that ends above it.
+     * Drawn with the cursor saved and put back, so nothing being typed moves.
+     */
+    private fun header(footRows: Int = barRows()) {
+        if (!::region.isInitialized || !region.ansi) return
+        val rows = terminal.height.takeIf { it > 0 } ?: return
+        val left = " " + theme.muted("workspace ") + theme.text(conversationOrNull()?.workspace?.name ?: config.workspace ?: "")
+        val right = theme.muted(api.client.server.removePrefix("https://").removePrefix("http://"))
+        val gap = width() - 2 - visibleLength(left) - visibleLength(right)
+        val line = if (gap >= 2) left + " ".repeat(gap) + right else left
+        val rule = theme.muted((if (LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
+        val bottom = (rows - footRows).coerceAtLeast(HEADER_ROWS + 1)
+        terminal.writer().print(
+            "\u001b7\u001b[${HEADER_ROWS + 1};${bottom}r" +
+                "\u001b[1;1H\u001b[2K" + LiveRegion.clip(line, width() - 1) + "\u001b[2;1H\u001b[2K" + rule + "\u001b8",
+        )
+        terminal.writer().flush()
+    }
+
+    private fun conversationOrNull(): Conversation? = if (::conversation.isInitialized) conversation else null
+
     private fun oneRow(left: String, right: String): String {
         val gap = width() - 3 - visibleLength(left) - visibleLength(right)
         return if (gap >= 2) left + " ".repeat(gap) + right else left + theme.muted(" · ") + right
@@ -1057,7 +1090,11 @@ class Interactive(
         val c = conversation
         val u = c.usage
         // Whether the agent can run commands on this computer: the door Orknux Shell keeps open to the server for it.
-        val device = if (::device.isInitialized && device.connected) theme.success("●") + theme.muted(" runs commands here") else theme.muted("○ no commands here")
+        // Said only when something is wrong: an agent here runs commands on this computer as a matter of course, and a
+        // light that is always on says nothing. Off, while the door to the server for them is down.
+        // The door takes a moment to open at the start, which is not news.
+        val settled = System.currentTimeMillis() - startedAt > DEVICE_GRACE_MILLIS
+        val device = if (::device.isInitialized && !device.connected && settled) theme.warning("commands cannot run here: reconnecting") else null
         val left = listOfNotNull(
             theme.text(c.agent?.name ?: c.chat?.agentName ?: "agent"),
             modeLabel(),
@@ -1069,7 +1106,7 @@ class Interactive(
             c.speeds.said()?.let { theme.muted(it) },
             device,
         ).joinToString(theme.muted(" · "))
-        // The workspace at the far right, as where one is rather than what is going on.
+        // The workspace is in the bar at the top of the window, where one is rather than what is going on.
         return left to theme.muted("workspace ") + theme.text(c.workspace.name)
     }
 
@@ -1729,8 +1766,11 @@ class Interactive(
         }
 
 
-        /** How wide a window has to be for the status bar on one row, with the workspace at its right. */
-        const val WIDE_BAR = 160
+        /** How long the command door may take to open at the start before the bar says it is not open. */
+        const val DEVICE_GRACE_MILLIS = 15_000L
+
+        /** The rows of the bar at the top of the window: the workspace, and a rule under it. */
+        const val HEADER_ROWS = 2
 
         /** How much of the thinking the live block shows: its last lines, as the web chat's does. */
         const val THINKING_LINES = 5
@@ -1744,8 +1784,19 @@ class Interactive(
 }
 
 /** The line reader, able to take back the list a completion left under the line - JLine keeps it until the line is done. */
-class ShellLineReader(terminal: Terminal) : org.jline.reader.impl.LineReaderImpl(terminal, "Orknux Shell", HashMap()) {
+class ShellLineReader(terminal: Terminal, private val resized: () -> Unit = {}) : org.jline.reader.impl.LineReaderImpl(terminal, "Orknux Shell", HashMap()) {
     fun dropList() {
         post = null
+    }
+
+    /**
+     * While a line is being read the reader holds the window-size signal, so a
+     * handler set on the terminal never hears it: the bars kept the width they
+     * were drawn at. The reader resizes as it does, and then the bars are
+     * drawn again at the new width.
+     */
+    override fun handleSignal(signal: Terminal.Signal) {
+        super.handleSignal(signal)
+        if (signal == Terminal.Signal.WINCH) resized()
     }
 }

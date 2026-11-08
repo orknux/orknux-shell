@@ -4,6 +4,20 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Changed
+
+- The workspace is in a bar of its own at the top of the window, with the
+  server beside it and a rule under it; the status bar at the foot is one row.
+- The status bar no longer says commands can run here, which is so whenever
+  the Shell is open; it says when they cannot.
+
+### Fixed
+
+- Resizing the window redraws both bars at the new width: while a line was
+  being read the line editor held the resize signal, and they kept the old one.
+
 ## 1.0.5
 
 ### Added
