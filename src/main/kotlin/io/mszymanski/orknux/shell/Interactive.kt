@@ -167,7 +167,24 @@ class Interactive(
                 theme.text(agent?.name ?: "the one you last talked to") + theme.muted(" · mode ") + modeLabel(),
         )
         say(theme.muted("/help for commands · @agent to ask another agent · Ctrl+O expands thoughts and tool calls · Ctrl+T sessions · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
+        // A newer Shell is said here, with the rest of the welcome, rather than above the prompt whenever the look
+        // came back. The look is given a moment; slower than that, the status bar says it once it knows.
+        startingNews?.let { news ->
+            news.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
+            news.newer?.let {
+                say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out - ") + theme.accent("/update") + theme.muted(" to install it."))
+                updateWaiting = it
+            }
+        }
         say("")
+    }
+
+    /** What the look for an update at the start found, in time for the welcome; null where it found nothing or took too long. */
+    private val startingNews: UpdateNews? by lazy {
+        runCatching {
+            java.util.concurrent.CompletableFuture.supplyAsync { DailyCheck.run(store, Updater(), force = true) }
+                .get(STARTING_LOOK_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }.getOrNull()
     }
 
     private fun remember() {
@@ -1623,13 +1640,13 @@ class Interactive(
      */
     private fun lookForUpdate() {
         Thread.ofVirtual().name("orknux-shell-update-check").start {
-            var first = true
+            // The welcome has looked already, where it had the time; after that the bar alone says it, rather than a
+            // line landing above the prompt in the middle of whatever is being written.
+            var first = startingNews == null
             while (true) {
                 val news = runCatching { DailyCheck.run(store, Updater(), force = first) }.getOrNull()
                 first = false
-                news?.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
                 news?.newer?.takeIf { it != updateWaiting }?.let {
-                    say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update"))
                     updateWaiting = it
                     footer()
                 }
@@ -2266,6 +2283,9 @@ class Interactive(
 
         /** How long the terminal has to say where the cursor is. */
         const val CURSOR_ANSWER_MILLIS = 800L
+
+        /** How long the welcome waits for the look for an update. */
+        const val STARTING_LOOK_MILLIS = 2_000L
 
         /** How many commands the list under a / shows at once. */
         const val SLASH_ROWS = 8

@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.21
+
+### Changed
+
+- A newer Shell is said in the welcome at the top, under the /help line -
+  "Orknux Shell 1.0.22 is out - /update to install it." - rather than on its
+  own line above the prompt whenever the look came back. Found later, while
+  the Shell runs, it is said in the status bar only.
+
 ## 1.0.20
 
 ### Changed
