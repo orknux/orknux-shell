@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.20
+
+### Changed
+
+- The status bar says "update to 1.0.21 · /update" where a newer Shell is out,
+  rather than "update 1.0.21".
+- /help lists Ctrl+O as expand and fold, and Ctrl+T and Ctrl+L.
+
 ## 1.0.19
 
 ### Fixed

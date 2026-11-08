@@ -1424,7 +1424,7 @@ class Interactive(
             device,
         ).joinToString(theme.muted(" · "))
         // The workspace is in the bar at the top of the window, where one is rather than what is going on.
-        val update = updateWaiting?.let { theme.accent("update $it") + theme.muted(" · /update") + theme.muted("   ") }.orEmpty()
+        val update = updateWaiting?.let { theme.accent("update to $it") + theme.muted(" · /update") + theme.muted("   ") }.orEmpty()
         return left to update + theme.muted("workspace ") + theme.text(c.workspace.name)
     }
 
@@ -1682,7 +1682,9 @@ class Interactive(
             "Alt+Enter, Shift+Enter, or \\ at the end" to "a new line",
             "Tab" to "complete commands, agents, workspaces, skills and files",
             "Shift+Tab" to "switch mode: auto, ask, plan",
-            "Ctrl+O" to "read the last turn's thinking",
+            "Ctrl+O" to "expand thoughts and tool calls, and fold them again",
+            "Ctrl+T" to "this chat's sessions - its own and its agents'",
+            "Ctrl+L" to "clear the screen",
             "Ctrl+C / Esc" to "interrupt the answer (twice: stop waiting)",
             "Ctrl+D" to "quit",
         ).forEach { (k, v) -> say("  " + theme.accent(k) + theme.muted("  $v")) }
