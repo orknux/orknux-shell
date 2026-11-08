@@ -40,8 +40,14 @@ jobs:
         run: ./mvnw -B package
 
       - name: Native image
-        shell: bash
+        if: runner.os != 'Windows'
         run: native-image -jar target/orknux-shell.jar -o target/orknux-shell
+
+      # On Windows it is native-image.cmd, which Git Bash does not find by its bare name.
+      - name: Native image (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: native-image.cmd -jar target\orknux-shell.jar -o target\orknux-shell
 
       - name: Smoke test
         shell: bash
