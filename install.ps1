@@ -66,7 +66,7 @@ try {
         Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile (Join-Path $Work $Asset)
         Invoke-WebRequest -UseBasicParsing -Uri "$Base/SHA256SUMS" -OutFile (Join-Path $Work 'SHA256SUMS')
     } catch {
-        Fail "could not download from ${Base}: $($_.Exception.Message)"
+        Fail "could not download from ${Base}: $($_.Exception.Message). Is there a published release? See https://github.com/$Repo/releases"
     }
 
     $wanted = Get-Content (Join-Path $Work 'SHA256SUMS') |

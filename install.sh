@@ -78,7 +78,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 say "Downloading Orknux Shell ($VERSION) ..."
-get "$BASE/$ASSET" "$WORK/$ASSET" || fail "could not download $BASE/$ASSET"
+get "$BASE/$ASSET" "$WORK/$ASSET" || fail "could not download $BASE/$ASSET - is there a published release$( [ "$VERSION" = latest ] || echo " $VERSION")? See https://github.com/$REPO/releases"
 get "$BASE/SHA256SUMS" "$WORK/SHA256SUMS" || fail "could not download $BASE/SHA256SUMS"
 
 WANTED="$(awk -v f="$ASSET" '$2 == f || $2 == "*"f { print $1 }' "$WORK/SHA256SUMS")"
