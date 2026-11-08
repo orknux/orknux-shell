@@ -4,6 +4,18 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.19
+
+### Fixed
+
+- Ctrl+L clears the screen with the prompt at the foot, over the status bar,
+  as the Shell draws it - the line editor's own clear left the prompt on the
+  top row and every command's answer hanging from there. The Shell also
+  waits longer for the terminal to say where the cursor is before each
+  prompt, which is how it puts the prompt back at the foot after a list.
+- The welcome line names Ctrl+O as what it now is - expand and fold - and
+  Ctrl+T.
+
 ## 1.0.18
 
 ### Added

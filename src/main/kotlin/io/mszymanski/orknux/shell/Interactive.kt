@@ -166,7 +166,7 @@ class Interactive(
             theme.muted("Workspace ") + theme.text(workspace.name) + theme.muted(" · agent ") +
                 theme.text(agent?.name ?: "the one you last talked to") + theme.muted(" · mode ") + modeLabel(),
         )
-        say(theme.muted("/help for commands · @agent to ask another agent · Ctrl+O the last turn in full · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
+        say(theme.muted("/help for commands · @agent to ask another agent · Ctrl+O expands thoughts and tool calls · Ctrl+T sessions · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
         say("")
     }
 
@@ -255,6 +255,10 @@ class Interactive(
         keys.bind(Reference("orknux-cycle-mode"), "\u001b[Z")
         keys.bind(Reference("orknux-thinking"), KeyMap.ctrl('O'))
         keys.bind(Reference("orknux-sessions"), KeyMap.ctrl('T'))
+        // Ctrl+L clears as the Shell draws, the prompt back at the foot over the status bar: the line editor's own
+        // left it on the top row, and everything after hung from there with the screen empty under it.
+        r.widgets["orknux-clear-screen"] = org.jline.reader.Widget { repaint(); true }
+        keys.bind(Reference("orknux-clear-screen"), KeyMap.ctrl('L'))
         keys.bind(Reference("orknux-close-list"), KeyMap.esc())
         listOf("\u001b\r", "\u001b\n", "\u001b[13;2u", "\u001b[27;2;13~").forEach { keys.bind(Reference("orknux-newline"), it) }
         // Enter runs the highlighted command while the list is open, and the line as typed otherwise.
@@ -2259,7 +2263,7 @@ class Interactive(
         const val SESSION_COUNT_MILLIS = 5_000L
 
         /** How long the terminal has to say where the cursor is. */
-        const val CURSOR_ANSWER_MILLIS = 300L
+        const val CURSOR_ANSWER_MILLIS = 800L
 
         /** How many commands the list under a / shows at once. */
         const val SLASH_ROWS = 8
