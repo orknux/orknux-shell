@@ -27,6 +27,25 @@ data class Message(val role: String, val content: String, val thinking: String?,
 data class Attachment(val id: Long, val filename: String, val contentType: String?, val sizeBytes: Long)
 
 /** An agent the conversation's agent asked: a session under the chat's own. */
+/** One of a question's answers, as the server offers it. */
+data class RequestOption(val id: String, val label: String, val description: String?)
+
+/**
+ * A question put to the person in a conversation - an agent's ask_person, or
+ * anything else that waits on a decision there. It carries its own options, so
+ * any kind is drawn the same way.
+ */
+data class PersonQuestion(
+    val id: String,
+    val kind: String,
+    val askedBy: String?,
+    val question: String,
+    val options: List<RequestOption>,
+    val items: List<String>,
+    val multiple: Boolean,
+    val allowsText: Boolean,
+)
+
 data class Subagent(val sessionId: String, val agent: String, val about: String, val active: Boolean, val depth: Int, val inputTokens: Long, val outputTokens: Long, val cost: String?)
 
 /** One line of a session's transcript. */
@@ -184,6 +203,37 @@ class Api(val client: OrknuxClient) {
                 cost = one?.get("spent").str("cost"),
             )
         }
+    }
+
+    /** The questions in a conversation nobody has answered yet, oldest first; none from a server that has no such questions. */
+    fun openQuestions(llmSessionId: String): List<PersonQuestion> = runCatching {
+        client.graphql(
+            "query Questions(\$id: ID!) { sessionRequests(sessionId: \$id) { id kind askedBy question chosen multiple allowsText " +
+                "options { id label description } items { name description } } }",
+            vars("id" to llmSessionId),
+        ).list("sessionRequests").filter { it.str("chosen") == null }.map { q ->
+            PersonQuestion(
+                id = q.str("id")!!,
+                kind = q.str("kind") ?: "",
+                askedBy = q.str("askedBy"),
+                question = q.str("question") ?: "",
+                options = q.list("options").map { RequestOption(it.str("id")!!, it.str("label") ?: "", it.str("description")) },
+                items = q.list("items").map { listOfNotNull(it.str("name"), it.str("description")).joinToString(" - ") },
+                multiple = q.bool("multiple") ?: false,
+                allowsText = q.bool("allowsText") ?: false,
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    /** Answers a question: one option, several where it is multiple, or the person's own words. */
+    fun answerQuestion(id: String, options: List<String>, text: String?, multiple: Boolean) {
+        val variables = Json.obj().put("id", id)
+        if (multiple) variables.putArray("options").apply { options.forEach { add(it) } } else options.firstOrNull()?.let { variables.put("option", it) }
+        text?.let { variables.put("text", it) }
+        client.graphql(
+            "mutation Answer(\$id: ID!, \$option: String, \$options: [String!], \$text: String) { answerRequest(id: \$id, option: \$option, options: \$options, text: \$text) { id } }",
+            variables,
+        )
     }
 
     /** A session's transcript, oldest first. */

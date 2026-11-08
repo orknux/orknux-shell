@@ -108,6 +108,7 @@ class Interactive(
         }
         policy.problems.forEach { say(theme.warning("Rule skipped: $it")) }
         theme.unknown.forEach { say(theme.warning("Theme entry ignored: $it")) }
+        if (drawable) toFoot()
 
         device = DeviceLoop(api.client, handler, deviceReport())
         device.start()
@@ -125,17 +126,26 @@ class Interactive(
     }
 
     /**
-     * The whole window, from the top: what the shell had on it is scrolled
-     * up into the terminal's scrollback - not wiped, and not an alternate
-     * screen, so the conversation itself stays in the scrollback too and a
-     * mouse wheel reads back through it - and the chat is written from the
-     * foot of a clean screen up, its prompt directly above the status bar.
+     * The whole window: what the shell had on it is scrolled up into the
+     * terminal's scrollback - not wiped, and not an alternate screen, so the
+     * conversation itself stays in the scrollback too and a mouse wheel reads
+     * back through it - and the cursor put at the top of the clean screen,
+     * where the banner is written. [toFoot] then takes it to the foot.
      */
     private fun takeScreen() {
         val rows = terminal.height.takeIf { it > 0 } ?: return
-        // Left on the last row rather than taken to the top: everything is written at the foot and scrolls up,
-        // so the prompt always sits directly above the status bar, as in Claude Code.
-        terminal.writer().print("\u001b[$rows;1H" + "\n".repeat(rows))
+        terminal.writer().print("\u001b[$rows;1H" + "\n".repeat(rows) + "\u001b[H")
+        terminal.writer().flush()
+    }
+
+    /**
+     * The banner stays at the top, and the prompt goes to the row directly
+     * above the status bar, as in Claude Code: everything after is written
+     * there and scrolls up, the banner with it once the screen is full.
+     */
+    private fun toFoot() {
+        val rows = terminal.height.takeIf { it > 0 } ?: return
+        terminal.writer().print("\u001b[${(rows - STATUS_ROWS).coerceAtLeast(1)};1H")
         terminal.writer().flush()
     }
 
@@ -230,6 +240,33 @@ class Interactive(
         keys.bind(Reference("orknux-close-list"), KeyMap.esc())
         listOf("\u001b\r", "\u001b\n", "\u001b[13;2u", "\u001b[27;2;13~").forEach { keys.bind(Reference("orknux-newline"), it) }
         keys.bind(Reference(LineReader.ACCEPT_LINE), KeyMap.ctrl('M'))
+        /*
+         * Down and Up go into the list while it is open: the list drawn as one
+         * types only shows the choices, and it is JLine's menu that moves through
+         * them - so the first arrow starts the menu on the first (or last)
+         * choice, and the menu's own keys take it from there: the arrows, Enter
+         * to take one, Esc to leave. With no list open they are history, as before.
+         */
+        for ((sequence, menu) in listOf(
+            "\u001b[B" to LineReader.MENU_COMPLETE, "\u001bOB" to LineReader.MENU_COMPLETE,
+            "\u001b[A" to LineReader.REVERSE_MENU_COMPLETE, "\u001bOA" to LineReader.REVERSE_MENU_COMPLETE,
+        )) {
+            val before = keys.getBound(sequence)
+            val name = "orknux-arrow-" + sequence.drop(1)
+            r.widgets[name] = org.jline.reader.Widget {
+                if (pushedUp > 0) {
+                    r.callWidget(menu)
+                    closeList(r)
+                } else {
+                    when (before) {
+                        is Reference -> r.callWidget(before.name())
+                        is org.jline.reader.Widget -> before.apply()
+                    }
+                }
+                true
+            }
+            keys.bind(Reference(name), sequence)
+        }
         return r
     }
 
@@ -390,8 +427,14 @@ class Interactive(
                 if (!said(text)) return
             } catch (refused: OrknuxException) {
                 say(theme.danger(refused.message ?: "Refused."))
+                say("")
             } catch (bad: IllegalArgumentException) {
                 say(theme.danger(bad.message ?: "That cannot be done."))
+                say("")
+            } catch (failed: RuntimeException) {
+                // A fault of the Shell's own, said and survived: one command going wrong is not the end of the chat.
+                say(theme.danger("✗ " + (failed.message ?: failed.javaClass.simpleName)))
+                say("")
             }
         }
     }
@@ -473,7 +516,9 @@ class Interactive(
             override fun thinking(text: String?) {
                 if (text != null && liveThinking == null) thinkingSince = System.currentTimeMillis()
                 liveThinking = text
-                region.thinking(text)
+                // Kept for Ctrl+O, but drawn live only when asked for: by default the spinner says "Thinking"
+                // and the text is read afterwards, from the "Thought for" line, as in Claude Code.
+                region.thinking(if (config.thinking == "expanded") text else null)
             }
             override fun width(): Int = this@Interactive.width()
         }
@@ -489,7 +534,7 @@ class Interactive(
         val raw = terminal.attributes
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
         terminal.attributes = raw
-        region.phase("thinking", "Thinking")
+        region.phase("thinking", theme.thinking("Thinking"))
         region.start { below() }
         // Ten frames a second, and only while a turn runs: nothing ticks when nothing is happening.
         val ticker = Thread.ofPlatform().daemon().name("orknux-shell-ticker").start {
@@ -529,6 +574,153 @@ class Interactive(
         // A blank line between an answer and the next prompt.
         say("")
         if (into === conversation) checkGoal()
+        answerQuestions(into)
+    }
+
+    // ---- questions the agent put to the person -------------------------------------------------
+
+    /**
+     * What the agent asked with ask_person - and anything else waiting on the
+     * person in this conversation - put to them as a list to choose from, with
+     * a row for their own words where the question takes them. An answer wakes
+     * the agent on the server, so its next turn is followed here as it is
+     * written; and asked about again, should that turn ask something too. Esc
+     * leaves a question open: `/answer` comes back to it.
+     */
+    private fun answerQuestions(into: Conversation, askedFor: Boolean = false) {
+        while (true) {
+            val session = into.llmSessionId ?: return
+            val open = api.openQuestions(session)
+            if (open.isEmpty()) {
+                if (askedFor) say(theme.muted("Nothing is waiting for an answer."))
+                return
+            }
+            var answered = false
+            for (question in open) {
+                if (!ask(question)) {
+                    say(theme.muted("Left open; /answer comes back to it."))
+                    say("")
+                    return
+                }
+                answered = true
+            }
+            if (!answered) return
+            val chat = into.chat?.id ?: return
+            followWake(chat, into)
+        }
+    }
+
+    /** One question; false where the person left it. */
+    private fun ask(question: PersonQuestion): Boolean {
+        say(theme.bold(question.question) + (question.askedBy?.let { theme.muted("  · $it asks") } ?: ""))
+        question.items.forEach { say(theme.muted("  • ") + it) }
+        val own = question.allowsText
+        val rows = question.options.map { option -> option.label + (option.description?.let { theme.muted(" - $it") } ?: "") } +
+            listOfNotNull(if (own) theme.muted("Answer in my own words") else null)
+        val picked: Set<Int> = if (question.multiple) {
+            pickMany("Answer", rows) ?: return false
+        } else {
+            setOf(chooseFrom("Answer", rows.indices.toList()) { rows[it] } ?: return false)
+        }
+        val ownRow = question.options.size
+        val text = if (own && ownRow in picked) {
+            val typed = try {
+                reader.readLine(theme.accent("› ") + theme.muted("your answer: ")).trim()
+            } catch (_: UserInterruptException) {
+                return false
+            } catch (_: org.jline.reader.EndOfFileException) {
+                return false
+            }
+            typed.ifEmpty { return false }
+        } else {
+            null
+        }
+        val chosen = picked.filter { it < ownRow }.map { question.options[it].id }
+        api.answerQuestion(question.id, chosen, text, question.multiple)
+        val said = picked.filter { it < ownRow }.map { question.options[it].label } + listOfNotNull(text?.let { "\"$it\"" })
+        say(theme.success("✓ ") + theme.muted("Answered: ") + said.joinToString(", "))
+        say("")
+        return true
+    }
+
+    /** Several of [rows], with Space; off a terminal, numbers separated by commas. */
+    private fun pickMany(what: String, rows: List<String>): Set<Int>? {
+        if (!region.ansi) {
+            say(theme.bold(what))
+            rows.forEachIndexed { i, row -> say("  " + theme.accent("${i + 1}.") + " " + row) }
+            val answer = ask(theme.muted("Numbers, separated by commas (Enter to leave it) › "))
+            if (answer.isEmpty()) return null
+            return answer.split(',').mapNotNull { it.trim().toIntOrNull()?.minus(1) }.filter { it in rows.indices }.toSet().ifEmpty { null }
+        }
+        val picker = Picker(
+            sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
+            key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) },
+            theme = theme,
+            rows = { terminal.height.takeIf { it > 0 } ?: 24 },
+            width = ::width,
+        )
+        val saved = terminal.enterRawMode()
+        val chosen = try {
+            synchronized(out) { picker.chooseMany(what, rows) }
+        } finally {
+            terminal.attributes = saved
+        }
+        pullDown(picker.lastHeight - 1)
+        return chosen
+    }
+
+    /**
+     * The turn an answer woke, drawn as it is written: the server runs it by
+     * itself, and the Shell reads it the way it reads a goal's iterations.
+     * Ctrl+C or Esc asks the server to stop it.
+     */
+    private fun followWake(chatId: String, into: Conversation) {
+        val output = object : TurnOutput {
+            override fun line(text: String) = say(text)
+            override fun phase(key: String, text: String) = region.phase(key, text)
+            override fun width(): Int = this@Interactive.width()
+        }
+        val renderer = TurnRenderer(theme, output, config.thinking, links)
+        phase = Phase.TURN
+        region.phase("woken", theme.muted("Taking your answer"))
+        region.start { below() }
+        val ticker = Thread.ofPlatform().daemon().start {
+            while (phase == Phase.TURN) {
+                region.tick()
+                try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+            }
+        }
+        val saved = terminal.enterRawMode()
+        val keys = Thread.ofPlatform().daemon().start {
+            val input = terminal.reader()
+            while (phase == Phase.TURN && !Thread.currentThread().isInterrupted) {
+                val c = try { input.read(100) } catch (_: Exception) { break }
+                if (c == 3 || c == 27) {
+                    runCatching { api.interrupt(chatId) }
+                    region.halt("Interrupted")
+                    break
+                }
+            }
+        }
+        try {
+            api.client.stream("/api/chats/$chatId/follow?wait=true", null) { frame -> renderer.handle(ChatEvent.of(frame)) }
+        } catch (failed: OrknuxException) {
+            say(theme.danger("✗ " + (failed.message ?: "Lost the chat.")))
+        } finally {
+            renderer.flush()
+            phase = Phase.OTHER
+            keys.interrupt()
+            keys.join(500)
+            ticker.interrupt()
+            region.stop()
+            terminal.attributes = saved
+        }
+        lastTurn = renderer
+        lastThinking = renderer.blocks.toList()
+        renderer.linkList().forEach(::say)
+        runCatching { into.refresh() }
+        say("")
+        footer()
     }
 
     /** What sits under the spinner: the files waiting to go, and the status line. */
@@ -539,7 +731,9 @@ class Interactive(
     private fun interruptTurn() {
         val said = active?.interrupt() ?: return
         region.halt("Interrupted")
+        say("")
         say(theme.warning(said))
+        say("")
     }
 
     /** A message to another agent, in a side conversation of its own that `/subagents` lists; the main one is untouched. */
@@ -703,7 +897,7 @@ class Interactive(
             val edited = try {
                 reader.readLine(theme.accent("  allow › "), null, null as MaskingCallback?, proposed).trim()
             } finally {
-                if (suspended) region.start { below() }
+                if (suspended) region.start(afterBlank = false) { below() }
             }
             if (edited.isEmpty()) return null
             try {
@@ -729,12 +923,16 @@ class Interactive(
 
         override fun ran(request: RunRequest, result: RunResult, approval: String) {
             val exit = if (result.exitCode == 0) theme.success("exit 0") else theme.danger("exit ${result.exitCode}")
-            val extra = listOfNotNull(
-                "${result.seconds}s",
+            val notable = listOfNotNull(
                 if (approval == "person") "approved" else null,
                 if (result.truncated) "output cut to the last ${CommandRunner.OUTPUT_LIMIT / 1000}k" else null,
                 if (result.timedOut) "stopped at its time limit" else null,
-            ).joinToString(" · ")
+            )
+            // In a turn the tool call's own line follows with the command, the exit code and the output, so an
+            // ordinary run is not said twice; what that line does not say - approved, cut, timed out - is.
+            if (region.active && notable.isEmpty()) return
+            val extra = (listOf("${result.seconds}s") + notable).joinToString(" · ")
+            if (region.active) say("")
             say(theme.dim(theme.muted("$ " + TurnRenderer.clip(TurnRenderer.oneLine(request.command), width() - 4))))
             say(theme.dim("  ⎿ ") + exit + theme.dim(theme.muted(" · $extra")))
         }
@@ -756,6 +954,11 @@ class Interactive(
      * the line editor's own styling would strip.
      */
     private fun say(text: String) {
+        // One blank line between things, never two: the renderer spaces its own pieces, and a notice said in the
+        // middle of a turn (an interruption, an approval) spaces itself as well.
+        val blank = stripAnsi(text).isBlank()
+        if (blank && lastBlank) return
+        lastBlank = blank
         if (::region.isInitialized && region.active) {
             region.line(text)
             return
@@ -770,6 +973,8 @@ class Interactive(
         }
     }
 
+    @Volatile private var lastBlank = true
+
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
     /** The status line under the editor, with the files waiting to go; while a turn runs, the region draws it instead. */
@@ -779,9 +984,10 @@ class Interactive(
             return
         }
         val st = status ?: return
-        // A blank row above it and a column in from the edge: the bar is a bar, not the last line of the answer.
-        val lines = listOf("") + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText()).map { " $it" }
-        val draw = { runCatching { st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 2)) }) } }
+        // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
+        val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
+        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }, statusText()).map { " $it" }
+        val draw = { runCatching { st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) }) } }
         synchronized(out) { if (::region.isInitialized) region.exclusive(draw) else draw() }
     }
 
@@ -847,7 +1053,7 @@ class Interactive(
             "workspace" -> workspace(argument)
             "skill" -> skill(argument)
             "resume" -> resume(argument)
-            "theme" -> showTheme()
+            "theme" -> theme(argument)
             "rules" -> showRules()
             "attach" -> if (argument == null) listAttachments() else attach(PastedPaths.tokens(slash.argument) ?: throw OrknuxException("A quote is not closed."))
             "detach" -> detach(argument)
@@ -858,6 +1064,7 @@ class Interactive(
             "review" -> review(argument)
             "goal" -> goal(argument)
             "update" -> update()
+            "answer" -> answerQuestions(conversation, askedFor = true)
         }
     }
 
@@ -1350,10 +1557,78 @@ class Interactive(
         return chosen?.let { items[it] }
     }
 
-    private fun showTheme() {
+    /**
+     * The colours: a list to choose one from and give it a new value, applied
+     * at once and kept in the configuration. `/theme accent #5b8def` sets one
+     * directly, `/theme reset` puts them all back; off a terminal it lists them.
+     */
+    private fun theme(argument: String?) {
+        val words = argument?.trim()?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }.orEmpty()
+        when {
+            words.firstOrNull()?.lowercase() == "reset" -> {
+                Theme.DEFAULTS.keys.forEach { theme.set(it, null) }
+                keepTheme()
+                say(theme.muted("The colours are Orknux's own again."))
+            }
+            words.size == 2 -> {
+                val (name, hex) = words[0].lowercase() to words[1]
+                if (!theme.set(name, hex)) throw OrknuxException(
+                    if (name !in Theme.DEFAULTS) "There is no colour called $name. The colours are ${Theme.DEFAULTS.keys.joinToString(", ")}."
+                    else "$hex is not a colour; write it as #rrggbb.",
+                )
+                keepTheme()
+                say("  " + theme.paint(name, "████") + " " + theme.text(name) + theme.muted(" is now ${theme.hex(name)}."))
+            }
+            !region.ansi -> listTheme()
+            else -> chooseColour()
+        }
+    }
+
+    private fun listTheme() {
         say(theme.bold("Theme") + theme.muted(" (${theme.depth.name.lowercase()} colour, links ${if (links.osc8) "clickable" else "written out"})"))
         theme.colours.forEach { (name, hex) -> say("  " + theme.paint(name, "████") + " " + theme.text(name.padEnd(9)) + theme.muted(hex)) }
-        say(theme.muted("Change any of them under \"theme\" in ${store.path}, as #rrggbb."))
+        say(theme.muted("/theme <name> #rrggbb changes one, /theme reset puts them back; kept in ${store.path}."))
+    }
+
+    private fun chooseColour() {
+        var at = 0
+        while (true) {
+            val names = Theme.DEFAULTS.keys.toList()
+            val rows = names.map { name ->
+                val own = theme.hex(name) == Theme.DEFAULTS[name]
+                theme.paint(name, "████") + " " + name.padEnd(9) + theme.muted(theme.hex(name) + if (own) "" else "  (yours)")
+            } + theme.muted("Orknux's own colours, all of them")
+            val chosen = chooseFrom("Theme", rows.indices.toList(), at) { rows[it] } ?: return
+            if (chosen == names.size) {
+                Theme.DEFAULTS.keys.forEach { theme.set(it, null) }
+                keepTheme()
+                say(theme.muted("The colours are Orknux's own again."))
+                return
+            }
+            val name = names[chosen]
+            at = chosen
+            val typed = try {
+                reader.readLine(theme.paint(name, "████") + " " + name + theme.muted(" (#rrggbb, empty for Orknux's own, Esc to keep) › "), null, null as org.jline.reader.MaskingCallback?, theme.hex(name)).trim()
+            } catch (_: UserInterruptException) {
+                continue
+            } catch (_: org.jline.reader.EndOfFileException) {
+                return
+            }
+            if (typed.isEmpty()) theme.set(name, null)
+            else if (!theme.set(name, typed)) {
+                say(theme.danger("$typed is not a colour; write it as #rrggbb."))
+                continue
+            }
+            keepTheme()
+        }
+    }
+
+    /** What differs from Orknux's own, into the configuration, and the bar and the lists redrawn in it. */
+    private fun keepTheme() {
+        config = store.update { it.copy(theme = theme.overrides()) }
+        val accent = theme.hex("accent")
+        listOf(LineReader.COMPLETION_STYLE_LIST_STARTING, LineReader.COMPLETION_STYLE_STARTING).forEach { reader.setVariable(it, "fg-rgb:$accent") }
+        footer()
     }
 
     private fun showRules() {
@@ -1368,6 +1643,9 @@ class Interactive(
     }
 
     companion object {
+        /** The rows the status bar takes at the foot: the rule above it, and the bar. */
+        const val STATUS_ROWS = 2
+
         /** How much of the thinking the live block shows: its last lines, as the web chat's does. */
         const val THINKING_LINES = 5
 

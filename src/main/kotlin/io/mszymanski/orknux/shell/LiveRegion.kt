@@ -41,12 +41,15 @@ class LiveRegion(
     private var below: () -> List<String> = { emptyList() }
     /** Extra lines between the spinner and what is below, such as the approval's choices. */
     private var asking: String? = null
+    /** Whether the transcript's last line is a blank one; where it is not, the region keeps a blank row above itself. */
+    private var afterBlank = true
 
     val frames: List<String> = if (unicode) BRAILLE else ASCII
 
     /** Starts drawing: the cursor hidden, the region drawn where the cursor is. */
-    fun start(below: () -> List<String>) = synchronized(lock) {
+    fun start(afterBlank: Boolean = true, below: () -> List<String>) = synchronized(lock) {
         this.below = below
+        this.afterBlank = afterBlank
         active = true
         stopped = null
         drawnRows = 0
@@ -75,6 +78,7 @@ class LiveRegion(
         sink(frameStart)
         erase()
         sink(text + "\r\n")
+        afterBlank = stripAnsi(text).isBlank()
         drawnRows = 0
         if (active) {
             draw()
@@ -132,13 +136,20 @@ class LiveRegion(
     fun lines(): List<String> {
         val out = mutableListOf<String>()
         val w = (width() - 1).coerceAtLeast(10)
+        // Room between the work written so far and what is happening now, as between the pieces of work.
+        if (!afterBlank) out += ""
+        val spinner = theme.accent(frames[frame % frames.size]) + " "
+        // The thinking shown live is under its own header, which carries the spinner: a second "Thinking" line
+        // under it said the same thing twice.
+        val thinkingNow = thinking != null && phaseKey == "thinking" && stopped == null
         thinking?.let { text ->
-            out += theme.thinking("Thinking") + theme.muted(" · ${(clock() - thinkingStarted) / 1000}s")
+            out += (if (thinkingNow) spinner else "") + theme.thinking("Thinking") + theme.muted(" · ${(clock() - thinkingStarted) / 1000}s")
             TurnRenderer.wrapped(text, w - 4).takeLast(THINKING_LINES).forEach { out += "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
         }
         val elapsed = (clock() - phaseStarted) / 1000
-        out += stopped?.let { theme.warning("■ ") + it }
-            ?: (theme.accent(frames[frame % frames.size]) + " " + phaseText + theme.muted(" · ${elapsed}s"))
+        if (!thinkingNow) {
+            out += stopped?.let { theme.warning("■ ") + it } ?: (spinner + phaseText + theme.muted(" · ${elapsed}s"))
+        }
         asking?.let { out += it }
         out += below()
         return out.map { clip(it, w) }

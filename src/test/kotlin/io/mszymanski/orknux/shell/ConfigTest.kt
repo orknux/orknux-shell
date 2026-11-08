@@ -93,6 +93,19 @@ class ConfigTest {
     }
 
     @Test
+    fun `a colour changed is changed for whatever holds the theme, and only the changed ones are kept`() {
+        val theme = Theme(mapOf("accent" to "#FF0000"), ColourDepth.TRUE)
+        assertTrue(theme.set("muted", "#123456"))
+        assertEquals("#123456", theme.colours["muted"])
+        assertEquals(mapOf("accent" to "#ff0000", "muted" to "#123456"), theme.overrides())
+        assertTrue(theme.set("accent", null))
+        assertEquals(Theme.DEFAULTS["accent"], theme.colours["accent"])
+        assertEquals(false, theme.set("accent", "blue"))
+        assertEquals(false, theme.set("background-ish", "#000000"))
+        assertEquals(mapOf("muted" to "#123456"), theme.overrides())
+    }
+
+    @Test
     fun `theme colours are the defaults, overridable, and fall back to 256 colours`() {
         val theme = Theme(mapOf("accent" to "#ff0000", "bogus" to "#000000", "text" to "red"), ColourDepth.TRUE)
         assertEquals("#ff0000", theme.colours["accent"])

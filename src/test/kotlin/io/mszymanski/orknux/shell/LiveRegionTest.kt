@@ -49,11 +49,13 @@ class LiveRegionTest {
         screen.writes.clear()
         region.tick()
         val frame = screen.writes.joinToString("")
-        // Thinking header, two lines of it, the spinner and the status: five rows, so four up.
-        assertTrue(frame.contains("\r\u001b[4A" + "\u001b[2K\u001b[B".repeat(4) + "\u001b[2K\u001b[4A"), frame)
+        // The thinking's header - which carries the spinner, so "Thinking" is said once - two lines of it, and the
+        // status: four rows, so three up.
+        assertTrue(frame.contains("\r\u001b[3A" + "\u001b[2K\u001b[B".repeat(3) + "\u001b[2K\u001b[3A"), frame)
+        assertEquals(1, Regex("Thinking").findAll(frame).count(), frame)
         // Never to the end of the screen: the status bar is pinned below.
         assertFalse(frame.contains("\u001b[J"), frame)
-        assertEquals(4, frame.split("\r\n").size - 1)
+        assertEquals(3, frame.split("\r\n").size - 1)
     }
 
     @Test
@@ -121,5 +123,19 @@ class LiveRegionTest {
         assertFalse(LiveRegion.unicodeFor("UTF-8", "Windows 10", emptyMap()))
         assertTrue(LiveRegion.unicodeFor("UTF-8", "Windows 11", mapOf("WT_SESSION" to "1")))
         assertEquals(listOf("|", "/", "-", "\\"), LiveRegion({}, { 80 }, true, theme, unicode = false).frames)
+    }
+
+    @Test
+    fun `a blank row above the spinner where the last line written is not blank, and none after a blank one`() {
+        val out = StringBuilder()
+        val region = LiveRegion({ out.append(it) }, { 80 }, true, Theme(depth = ColourDepth.NONE))
+        region.start { emptyList() }
+        region.phase("thinking", "Thinking")
+        assertEquals(1, region.lines().size, "a turn starts after the blank line under the message")
+        region.line("▸ Thought for 1.0s")
+        assertEquals(listOf("", "Thinking"), region.lines().map { stripAnsi(it).substringBefore(" ·") }.map { it.removePrefix("⠋ ").removePrefix("⠙ ") }.let { listOf(it[0], it[1].substringAfter(' ')) })
+        region.line("")
+        assertEquals(1, region.lines().size)
+        region.stop()
     }
 }

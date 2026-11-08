@@ -22,10 +22,21 @@ class Picker(
         private set
 
     /** The index chosen, or null. [labels] may carry colour; [current] is where the highlight starts. */
-    fun choose(title: String, labels: List<String>, current: Int = 0): Int? {
+    fun choose(title: String, labels: List<String>, current: Int = 0): Int? = pick(title, labels, current, many = false)?.first
+
+    /**
+     * Several chosen: Space ticks and unticks the highlighted row, Enter takes
+     * the ticked ones - or the highlighted one, where none is ticked. Null for Esc.
+     */
+    fun chooseMany(title: String, labels: List<String>): Set<Int>? =
+        pick(title, labels, 0, many = true)?.let { (at, ticked) -> ticked.ifEmpty { setOf(at) } }
+
+    private fun pick(title: String, labels: List<String>, current: Int, many: Boolean): Pair<Int, Set<Int>>? {
         if (labels.isEmpty()) return null
+        val ticked = sortedSetOf<Int>()
         var at = current.coerceIn(0, labels.lastIndex)
-        val window = (rows() - 6).coerceIn(3, labels.size)
+        // At least three rows where the screen is tiny, but never more than there are choices: one workspace is one row.
+        val window = (rows() - 6).coerceAtLeast(3).coerceAtMost(labels.size)
         var top = (at - window / 2).coerceIn(0, labels.size - window)
         var drawn = 0
         var typed = ""
@@ -33,9 +44,10 @@ class Picker(
         fun frame(): List<String> {
             if (at < top) top = at
             if (at >= top + window) top = at - window + 1
-            val out = mutableListOf(theme.bold(title) + theme.muted("  ↑↓ choose · Enter take · Esc leave"))
+            val out = mutableListOf(theme.bold(title) + theme.muted(if (many) "  ↑↓ move · Space tick · Enter take · Esc leave" else "  ↑↓ choose · Enter take · Esc leave"))
             for (i in top until top + window) {
-                val number = theme.muted("${i + 1}.".padStart(labels.size.toString().length + 1)) + " "
+                val number = theme.muted("${i + 1}.".padStart(labels.size.toString().length + 1)) + " " +
+                    (if (!many) "" else if (i in ticked) theme.accent("[x] ") else theme.muted("[ ] "))
                 out += if (i == at) theme.accent("› ") + number + theme.bold(stripAnsi(labels[i]))
                 else "  " + number + labels[i]
             }
@@ -53,10 +65,27 @@ class Picker(
             sink(sb.toString())
         }
 
+        /*
+         * Each frame written over the last in place, one synchronized write:
+         * back to the first row, every row cleared and written as it goes, and
+         * rows the frame no longer has cleared after it. Erasing all of it first
+         * and drawing again was a blank list between keys - a flash on every arrow.
+         */
         fun draw() {
-            erase()
             val lines = frame()
-            sink(LiveRegion.SYNC_START + "\r" + lines.joinToString("\r\n") + LiveRegion.SYNC_END)
+            val sb = StringBuilder(LiveRegion.SYNC_START).append('\r')
+            if (drawn > 1) sb.append("\u001b[").append(drawn - 1).append('A')
+            lines.forEachIndexed { i, line ->
+                if (i > 0) sb.append("\r\n")
+                sb.append(LiveRegion.CLEAR_LINE).append(line)
+            }
+            val left = drawn - lines.size
+            if (left > 0) {
+                repeat(left) { sb.append("\r\n").append(LiveRegion.CLEAR_LINE) }
+                sb.append("\u001b[").append(left).append('A')
+            }
+            sb.append(LiveRegion.SYNC_END)
+            sink(sb.toString())
             drawn = lines.size
         }
 
@@ -67,7 +96,8 @@ class Picker(
                 val c = key(-1)
                 when {
                     c < 0 -> return null
-                    c == 13 || c == 10 -> return at
+                    c == 13 || c == 10 -> return at to ticked.toSet()
+                    many && c == ' '.code -> if (!ticked.remove(at)) ticked.add(at)
                     c == 3 || c == 'q'.code -> return null
                     c == 27 -> when (escape()) {
                         "[A", "OA" -> at = (at - 1).coerceAtLeast(0)
@@ -87,7 +117,7 @@ class Picker(
                         if (n in 1..labels.size) at = n - 1
                         if (typed.length >= labels.size.toString().length || n * 10 > labels.size) {
                             typed = ""
-                            if (n in 1..labels.size) return at
+                            if (n in 1..labels.size && !many) return at to ticked.toSet()
                         }
                     }
                 }

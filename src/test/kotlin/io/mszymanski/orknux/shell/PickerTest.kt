@@ -56,6 +56,24 @@ class PickerTest {
     }
 
     @Test
+    fun `one choice is a list of one, and two are a list of two`() {
+        assertEquals(0, picker("\r").choose("Workspaces", listOf("Private")))
+        val p = picker("\r")
+        assertEquals(1, p.choose("Workspaces", listOf("Private", "Team"), current = 1))
+        assertEquals(3, p.lastHeight, "the title and two rows")
+    }
+
+    @Test
+    fun `moving the highlight rewrites the rows in place, and never blanks the list between keys`() {
+        val out = StringBuilder()
+        picker("\u001b[B\r", out).choose("Agent", names)
+        val second = out.toString().split(LiveRegion.SYNC_START)[2].substringBefore(LiveRegion.SYNC_END)
+        assertTrue(second.startsWith("\r\u001b[4A"), "back to the title row first")
+        assertEquals(5, second.split(LiveRegion.CLEAR_LINE).size - 1, "each row cleared just before it is written")
+        assertFalse(second.contains("\u001b[B"), "not a pass that clears every row before drawing any")
+    }
+
+    @Test
     fun `an unknown slash word is caught, a path is not`() {
         assertEquals("agnet", SlashCommands.unknown("/agnet"))
         assertEquals("agent", SlashCommands.nearest("agnet"))

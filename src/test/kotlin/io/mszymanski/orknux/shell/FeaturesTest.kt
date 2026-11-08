@@ -167,13 +167,14 @@ class FeaturesTest {
         assertEquals(2, renderer.blocks.size)
         assertEquals(ThinkingBlock("First I look.", 2000), renderer.blocks[0])
         assertEquals("Now I know.", renderer.blocks[1].text)
-        assertEquals("▸ Thought for 2.0s  (Ctrl+O to read)", out.lines[0])
-        assertTrue(Regex("""✓ terminal_run ls · \d+\.\ds · exit 0 · a""").matches(out.lines[1]), out.lines[1])
-        assertTrue(out.lines[2].startsWith("▸ Thought for"), out.lines[2])
-        // A blank line where the work ends and the answer begins.
+        // Each piece of work on its own, with a blank line between, and one more before the answer.
+        assertEquals(listOf("▸ Thought for 2.0s  (Ctrl+O to read)", ""), out.lines.subList(0, 2))
+        assertTrue(Regex("""✓ terminal_run ls · \d+\.\ds · exit 0 · a""").matches(out.lines[2]), out.lines[2])
         assertEquals("", out.lines[3])
-        assertEquals("Done.", out.lines[4])
-        assertEquals(5, out.lines.size)
+        assertTrue(out.lines[4].startsWith("▸ Thought for"), out.lines[4])
+        assertEquals("", out.lines[5])
+        assertEquals("Done.", out.lines[6])
+        assertEquals(7, out.lines.size)
     }
 
     @Test

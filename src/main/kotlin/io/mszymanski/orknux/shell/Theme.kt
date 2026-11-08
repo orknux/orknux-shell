@@ -9,7 +9,26 @@ package io.mszymanski.orknux.shell
  */
 class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth = ColourDepth.detect()) {
 
-    val colours: Map<String, String> = DEFAULTS + overrides.filter { (k, v) -> k in DEFAULTS.keys && parseHex(v) != null }
+    private val current: MutableMap<String, String> =
+        LinkedHashMap(DEFAULTS + overrides.filter { (k, v) -> k in DEFAULTS.keys && parseHex(v) != null }.mapValues { normalise(it.value) })
+
+    /** The colours now, by name. Changed in place by [set], so whatever holds this theme draws in the new one at once. */
+    val colours: Map<String, String> get() = current
+
+    /** One colour changed, or put back to Orknux's own with null. False for a name or a value that is not one. */
+    fun set(name: String, hex: String?): Boolean {
+        if (name !in DEFAULTS) return false
+        if (hex == null) {
+            current[name] = DEFAULTS.getValue(name)
+            return true
+        }
+        if (parseHex(hex) == null) return false
+        current[name] = normalise(hex)
+        return true
+    }
+
+    /** The colours that differ from Orknux's own: what the configuration keeps. */
+    fun overrides(): Map<String, String> = current.filter { (k, v) -> DEFAULTS[k] != v }
 
     val unknown: List<String> = overrides.filter { (k, v) -> k !in DEFAULTS.keys || parseHex(v) == null }.map { (k, v) -> "$k=$v" }
 
@@ -60,6 +79,8 @@ class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth 
             "thinking" to "#c4453d",
             "code" to "#c084fc",
         )
+
+        fun normalise(hex: String): String = "#" + hex.trim().removePrefix("#").lowercase()
 
         fun parseHex(hex: String): Triple<Int, Int, Int>? {
             val h = hex.trim().removePrefix("#")

@@ -4,6 +4,41 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Added
+
+- Questions an agent puts to you with ask_person are a list to choose from
+  - with a row for your own words, and Space to tick several where the
+  question takes more than one. The agent's next turn follows as soon as you
+  answer. Esc leaves a question open; `/answer` comes back to it.
+- Tables in answers are drawn with borders, each column as wide as its widest
+  cell, and narrowed to fit the window, a long cell wrapping onto more lines.
+- A file path an answer names is a link that opens the file: Windows paths,
+  Linux paths and `~/`, and under WSL the right Windows address for either.
+- `/theme` is a list: choose a colour, type its new value, and it changes at
+  once and is kept. `/theme <name> #rrggbb` and `/theme reset` too.
+
+### Changed
+
+- The banner stays at the top of the window; the prompt sits above the status
+  bar, which has a rule across above it.
+- A model's thinking is not written out live any more: "Thinking" says it is
+  happening, and Ctrl+O reads it. `/thinking expanded` streams it as before.
+- "Thinking" and "Thought" are in the thinking colour.
+- A blank line between every piece of work - a thought, a tool call - and
+  around an interruption, never two.
+- A command run here is no longer said twice in a turn: the tool call's line
+  says it, unless you approved it, its output was cut or it timed out.
+- Down and Up move into the list of commands that opens on `/`.
+
+### Fixed
+
+- `/workspace` with one workspace failed with "Cannot coerce value to an
+  empty range".
+- A list you choose from no longer flashes on every arrow key.
+- A refused command left no blank line before the next prompt.
+
 ## 1.0.3
 
 ### Added

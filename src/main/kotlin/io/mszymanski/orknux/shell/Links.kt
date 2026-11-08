@@ -54,6 +54,37 @@ class Links(val osc8: Boolean, private val server: String?) {
             ProcessBuilder(command).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
         }
 
+        /**
+         * The `file:` address of a path an answer names - `C:\\Users\\me\\a.csv`,
+         * `/home/me/a.csv`, `~/a.csv` - for the terminal to open on a click; null
+         * for anything that is not one. A single word after a slash (`/agent`)
+         * is a command, not a path. Under WSL, where the terminal is Windows',
+         * `/mnt/c/...` is the drive it is and any other path is reached through
+         * `\\\\wsl.localhost\\<distro>`, so a click opens it on Windows.
+         */
+        fun fileTarget(text: String, env: Map<String, String> = System.getenv(), home: String = System.getProperty("user.home")): String? {
+            val path = text.trim()
+            if (path.isEmpty() || path.contains('\n') || path.contains("://")) return null
+            fun uri(p: String, host: String = ""): String? =
+                runCatching { URI("file", host, if (p.startsWith("/")) p else "/$p", null).toASCIIString() }.getOrNull()
+            Regex("""^([A-Za-z]):[\\/](.*)$""").find(path)?.let { m ->
+                return uri(m.groupValues[1].uppercase() + ":/" + m.groupValues[2].replace('\\', '/'))
+            }
+            val posix = when {
+                path.startsWith("~/") -> home.trimEnd('/') + path.substring(1)
+                path.startsWith("/") -> path
+                else -> return null
+            }
+            val rest = posix.trimEnd('/').removePrefix("/")
+            if (!rest.contains('/') && !rest.contains('.')) return null
+            val distro = env["WSL_DISTRO_NAME"]
+            if (distro != null) {
+                Regex("""^/mnt/([a-z])(/.*)?$""").find(posix)?.let { m -> return uri(m.groupValues[1].uppercase() + ":" + (m.groupValues[2].ifEmpty { "/" })) }
+                return uri("/$distro$posix", "wsl.localhost")
+            }
+            return uri(posix)
+        }
+
         /** A `file://` address for a path, for a finding's file:line to open in an editor that takes one. */
         fun fileUrl(path: Path): String = path.toAbsolutePath().normalize().toUri().toString()
     }

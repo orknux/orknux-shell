@@ -202,12 +202,13 @@ class TurnRenderer(
     private var lastKind: Kind? = null
 
     /**
-     * Lines of one kind, with a blank line where the kind changes: the work
-     * the agent did and the answer it gave read as two blocks, not one run.
+     * Lines with room around them: a blank line before every piece of work - a
+     * thought, a tool call, a note - so each reads as its own, and before the
+     * answer; none inside the answer, which arrives in pieces as it streams.
      */
     private fun write(kind: Kind, lines: List<String>) {
         if (lines.isEmpty()) return
-        if (lastKind != null && lastKind != kind) out.line("")
+        if (lastKind != null && (kind == Kind.WORK || lastKind != kind)) out.line("")
         lastKind = kind
         lines.forEach(out::line)
     }
@@ -229,7 +230,7 @@ class TurnRenderer(
                 justClosed = false
                 thinking.append(event.text)
                 if (thinkingMode != "hidden") out.thinking(thinking.toString())
-                out.phase("thinking", "Thinking")
+                out.phase("thinking", theme.thinking("Thinking"))
             }
             is ChatEvent.Thought -> closeThinking(event)
             is ChatEvent.Writing -> out.phase(
@@ -254,7 +255,7 @@ class TurnRenderer(
                 val call = calls.remove(event.at)
                 val took = callStarted.remove(event.at)?.let { System.currentTimeMillis() - it }
                 work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
-                out.phase("thinking", "Thinking")
+                out.phase("thinking", theme.thinking("Thinking"))
             }
             is ChatEvent.Chunk -> {
                 answer.append(event.text)
@@ -330,9 +331,9 @@ class TurnRenderer(
         /** A stretch of thinking as the transcript keeps it: one line, the whole of it, or nothing. */
         fun fold(block: ThinkingBlock, mode: String, theme: Theme, width: Int): List<String> = when (mode) {
             "hidden" -> emptyList()
-            "expanded" -> listOf(theme.thinking("▾") + theme.muted(" Thought" + forHowLong(block.millis))) +
+            "expanded" -> listOf(theme.thinking("▾ Thought") + theme.muted(forHowLong(block.millis))) +
                 wrapped(block.text, width - 4).map { "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) }
-            else -> listOf(theme.thinking("▸") + theme.muted(" Thought" + forHowLong(block.millis)) + theme.dim(theme.muted("  (Ctrl+O to read)")))
+            else -> listOf(theme.thinking("▸ Thought") + theme.muted(forHowLong(block.millis)) + theme.dim(theme.muted("  (Ctrl+O to read)")))
         }
 
         /** Nothing where the time is not known - a line from history kept none - which is a negative [millis]. */
