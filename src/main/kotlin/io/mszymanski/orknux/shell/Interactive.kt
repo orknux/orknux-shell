@@ -792,7 +792,8 @@ class Interactive(
             queued.forEach { add(theme.muted("  queued · ") + theme.text(it)) }
             if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) "type to queue a message for when this turn ends" else "▏"))
         }
-        if (status != null) return typing
+        // A blank line between what is happening and what is being written.
+        if (status != null) return listOf("") + typing
         return listOf("") + typing + listOfNotNull(rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())
     }
 
@@ -1121,7 +1122,7 @@ class Interactive(
         val st = status ?: return
         // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
         val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
-        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + (" " + statusParts().first)
+        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + (" " + statusText())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })

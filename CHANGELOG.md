@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.9
+
+### Fixed
+
+- The workspace is at the right of the status bar again: 1.0.8 drew only the
+  bar's left half.
+- A blank line between the spinner and the messages queued and being typed
+  under it.
+
 ## 1.0.8
 
 ### Changed
