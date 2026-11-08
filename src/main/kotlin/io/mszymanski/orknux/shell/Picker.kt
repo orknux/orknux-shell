@@ -50,7 +50,8 @@ class Picker(
             for (i in top until top + window) {
                 val number = theme.muted("${i + 1}.".padStart(labels.size.toString().length + 1)) + " " +
                     (if (!many) "" else if (i in ticked) theme.accent("[x] ") else theme.muted("[ ] "))
-                out += if (i == at) theme.accent("› ") + number + theme.bold(stripAnsi(labels[i]))
+                // The highlighted row in bold, its own colours kept - a status said in green stays green when chosen.
+                out += if (i == at) theme.accent("› ") + number + theme.bold(labels[i].replace(Theme.RESET, Theme.RESET + Theme.BOLD))
                 else "  " + number + labels[i]
             }
             if (labels.size > window) out += theme.muted("  ${top + 1}-${top + window} of ${labels.size}")

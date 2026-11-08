@@ -1544,7 +1544,7 @@ class Interactive(
         val shown = found.indexOfFirst { if (reading == null) it.kind == "this chat" else it.session.sessionId == reading }.coerceAtLeast(0)
         val chosen = chooseFrom("Sessions", found, shown, closeKey = SESSIONS_KEY) { f ->
             val s = f.session
-            (if (s.active) theme.warning("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
+            (if (s.active) theme.success("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
                 (if (found.indexOf(f) == shown) theme.accent(" · reading") else "") +
                 theme.muted(" · ↑${TurnRenderer.tokens(s.inputTokens)} ↓${TurnRenderer.tokens(s.outputTokens)}" + (s.cost?.let { " · $it" } ?: "") +
                     " · " + TurnRenderer.oneLine(s.about))

@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.22
+
+### Fixed
+
+- /sessions says an active session in green and an idle one in grey, and the
+  row highlighted in any list keeps its colours, in bold - it used to be all
+  white, a status included.
+
 ## 1.0.21
 
 ### Changed
