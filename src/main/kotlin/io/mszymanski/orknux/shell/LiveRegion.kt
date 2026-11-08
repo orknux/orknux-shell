@@ -77,7 +77,15 @@ class LiveRegion(
         private set
     private val held = mutableListOf<String>()
 
-    fun pause() = synchronized(lock) { paused = true }
+    /** Its rows taken off the screen, the cursor where they began, and nothing drawn until [resume]. */
+    fun pause() = synchronized(lock) {
+        if (ansi && active) {
+            sink(SYNC_START)
+            erase()
+            sink(SYNC_END)
+        }
+        paused = true
+    }
 
     /** The screen was cleared under it: nothing of it is on it any more, so nothing is erased before it is drawn again. */
     fun forget() = synchronized(lock) { drawnRows = 0 }

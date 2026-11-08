@@ -144,7 +144,7 @@ class UpdatesTest {
         var asks = 0
         latest = { asks++; 200 to answer(version = "99.0.0") }
         val u = updater()
-        val day = Updater.DAY.toMillis()
+        val day = Updater.CHECK_EVERY.toMillis()
         assertEquals("99.0.0", DailyCheck.run(store, u, now = 1_000, env = emptyMap())?.newer)
         assertEquals("99.0.0", DailyCheck.run(store, u, now = 1_000 + day / 2, env = emptyMap())?.newer, "from what was found")
         assertEquals(1, asks)

@@ -69,6 +69,9 @@ class Interactive(
     @Volatile private var liveThinking: String? = null
     @Volatile private var thinkingSince = 0L
     @Volatile private var wakeForApproval = false
+
+    /** Ctrl+T pressed at the prompt: the line is set aside, the list shown, and the line given back. */
+    @Volatile private var sessionsAsked = false
     @Volatile private var lastTurn: TurnRenderer? = null
     private var lastThinking: List<ThinkingBlock> = emptyList()
     private val attachments = mutableListOf<Attachment>()
@@ -242,9 +245,15 @@ class Interactive(
         r.widgets["orknux-cycle-mode"] = org.jline.reader.Widget { cycleMode(); true }
         r.widgets["orknux-newline"] = org.jline.reader.Widget { r.buffer.write("\n"); true }
         r.widgets["orknux-thinking"] = org.jline.reader.Widget { toggleDetails(); true }
+        r.widgets["orknux-sessions"] = org.jline.reader.Widget {
+            sessionsAsked = true
+            terminal.raise(Terminal.Signal.INT)
+            true
+        }
         val keys = r.keyMaps[LineReader.MAIN]!!
         keys.bind(Reference("orknux-cycle-mode"), "\u001b[Z")
         keys.bind(Reference("orknux-thinking"), KeyMap.ctrl('O'))
+        keys.bind(Reference("orknux-sessions"), KeyMap.ctrl('T'))
         keys.bind(Reference("orknux-close-list"), KeyMap.esc())
         listOf("\u001b\r", "\u001b\n", "\u001b[13;2u", "\u001b[27;2;13~").forEach { keys.bind(Reference("orknux-newline"), it) }
         // Enter runs the highlighted command while the list is open, and the line as typed otherwise.
@@ -413,6 +422,7 @@ class Interactive(
     private fun loop() {
         while (true) {
             drainApprovals()
+            countSessions()
             footer()
             alignToFoot()
             val line = try {
@@ -424,6 +434,17 @@ class Interactive(
                 if (wakeForApproval) {
                     wakeForApproval = false
                     prefill = interrupted.partialLine?.takeIf { it.isNotEmpty() }
+                    continue
+                }
+                if (sessionsAsked) {
+                    sessionsAsked = false
+                    prefill = interrupted.partialLine?.takeIf { it.isNotEmpty() }
+                    // The prompt's row, left behind by the interruption, gives way to the list; the line comes back after.
+                    if (region.ansi) {
+                        terminal.writer().print("\u001b[1A\u001b[2K")
+                        terminal.writer().flush()
+                    }
+                    sessionsByKey()
                     continue
                 }
                 if (interrupted.partialLine.isNullOrEmpty()) say(theme.muted("(Ctrl+D or /quit to leave)"))
@@ -897,6 +918,14 @@ class Interactive(
                 when (c) {
                     3 -> interruptTurn()
                     15 -> toggleDetails()
+                    SESSIONS_KEY -> {
+                        region.pause()
+                        try {
+                            sessionsByKey()
+                        } finally {
+                            region.resume()
+                        }
+                    }
                     // Esc closes the list of commands when it is open, and interrupts the turn when it is not.
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) {
                         if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else interruptTurn()
@@ -1353,6 +1382,7 @@ class Interactive(
             // The cost only where the model has a price; a local model's has none, and a dash read as a glitch.
             u.cost?.let { theme.muted(TurnRenderer.cost(it)) },
             c.speeds.said()?.let { theme.muted(it) },
+            sessionCount.takeIf { it > 0 }?.let { theme.text("$it subagent" + (if (it == 1) "" else "s")) + theme.muted(" Ctrl+T") },
             device,
         ).joinToString(theme.muted(" · "))
         // The workspace is in the bar at the top of the window, where one is rather than what is going on.
@@ -1438,24 +1468,106 @@ class Interactive(
      */
     private fun sessions() {
         val own = conversation.llmSessionId ?: throw OrknuxException("There is no session yet: it starts with your first message.")
+        // What was being read belongs to the chat it was read from; another chat starts on its own.
+        if (readingRoot != own) {
+            reading = null
+            readingRoot = own
+        }
         val found = buildList {
-            api.session(own)?.let { add(it to "this chat") }
-            api.subagents(own).forEach { add(it to "asked") }
-            sideChats.values.mapNotNull { it.llmSessionId }.forEach { id -> api.session(id)?.let { add(it to "@agent") } }
-        }.sortedByDescending { it.first.active }
+            api.session(own)?.let { add(Found(it, "this chat")) }
+            api.subagents(own).forEach { add(Found(it, "asked")) }
+            sideChats.values.forEach { side -> side.llmSessionId?.let { id -> api.session(id)?.let { add(Found(it, "@agent", side.chat?.id)) } } }
+        }.sortedByDescending { it.session.active }
+        sessionCount = (found.size - 1).coerceAtLeast(0)
         if (found.isEmpty()) {
             say(theme.muted("No sessions found for this chat."))
             return
         }
         // "Active" as the server means it - an agent at work in it now, or a moment ago - not a claim that a turn is running.
-        val active = found.count { it.first.active }
+        val active = found.count { it.session.active }
         say(theme.bold("Sessions of this chat") + theme.muted(" · ${found.size}, $active active"))
-        val chosen = chooseFrom("Sessions", found) { (s, kind) ->
-            (if (s.active) theme.warning("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" ($kind)") +
+        val shown = found.indexOfFirst { if (reading == null) it.kind == "this chat" else it.session.sessionId == reading }.coerceAtLeast(0)
+        val chosen = chooseFrom("Sessions", found, shown, closeKey = SESSIONS_KEY) { f ->
+            val s = f.session
+            (if (s.active) theme.warning("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
+                (if (found.indexOf(f) == shown) theme.accent(" · reading") else "") +
                 theme.muted(" · ↑${TurnRenderer.tokens(s.inputTokens)} ↓${TurnRenderer.tokens(s.outputTokens)}" + (s.cost?.let { " · $it" } ?: "") +
                     " · " + TurnRenderer.oneLine(s.about))
         } ?: return
-        openInBrowser("the session log of ${chosen.first.agent}", "/workspace/${conversation.workspace.id}/sessions/${chosen.first.sessionId}")
+        open(chosen)
+    }
+
+    /** A session of this chat as /sessions lists it: whose it is, and the chat behind it where it is a side chat. */
+    private data class Found(val session: Subagent, val kind: String, val chat: String? = null)
+
+    /**
+     * A session read here, in the terminal: its transcript written out under a
+     * line saying whose it is. The chat's own takes you back to it. What you
+     * write still goes to this chat, whichever one is being read - and the next
+     * /sessions lists the same family, from this chat's session, with the one
+     * being read marked.
+     */
+    private fun open(found: Found) {
+        val s = found.session
+        say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
+        say("")
+        when {
+            found.kind == "this chat" -> {
+                reading = null
+                conversation.chat?.let { printHistory(api.messages(it.id)) }
+            }
+            found.chat != null -> {
+                reading = s.sessionId
+                printHistory(api.messages(found.chat))
+            }
+            else -> {
+                reading = s.sessionId
+                printSession(s.sessionId)
+            }
+        }
+        if (reading != null) {
+            say("")
+            say(theme.muted("You are reading ${s.agent}'s session. What you write still goes to this chat; /sessions or Ctrl+T to read another, or this chat again."))
+        }
+    }
+
+    /** The session /sessions last opened, and the chat's session it belongs to; null while this chat itself is read. */
+    @Volatile private var reading: String? = null
+    private var readingRoot: String? = null
+
+    /** How many sessions this chat has besides its own - the agents it asked, its side chats - for the status bar. */
+    @Volatile private var sessionCount = 0
+    private var sessionCountFor: String? = null
+    @Volatile private var sessionCountAt = 0L
+
+    /** Counted again in the background, at most every few seconds; the bar is drawn again when it changes. */
+    private fun countSessions(force: Boolean = false) {
+        val own = conversationOrNull()?.llmSessionId
+        if (own == null) {
+            sessionCount = sideChats.size
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!force && own == sessionCountFor && now - sessionCountAt < SESSION_COUNT_MILLIS) return
+        sessionCountAt = now
+        sessionCountFor = own
+        Thread.ofVirtual().name("orknux-session-count").start {
+            val asked = runCatching { api.subagents(own).size }.getOrNull() ?: return@start
+            val count = asked + sideChats.values.count { it.llmSessionId != null }
+            if (count != sessionCount) {
+                sessionCount = count
+                footer()
+            }
+        }
+    }
+
+    /**
+     * Ctrl+T: the list /sessions shows, from wherever one is - at the prompt or
+     * while a turn runs, the live block set aside for it - and Ctrl+T again
+     * closes it, as Esc does.
+     */
+    private fun sessionsByKey() {
+        runCatching { sessions() }.onFailure { say(theme.warning(it.message ?: "Could not list the sessions.")) }
     }
 
     /** Opens a page of the server in the browser, and says its address too - clickable where the terminal draws links. */
@@ -1467,15 +1579,27 @@ class Interactive(
 
     // ---- updates -----------------------------------------------------------------------------
 
-    /** Once a day, in the background: one line where a newer Shell is out, and nothing else. */
+    /**
+     * In the background, at the start and then every hour: a newer Shell is
+     * said once in the conversation and kept in the status bar until /update.
+     */
     private fun lookForUpdate() {
         Thread.ofVirtual().name("orknux-shell-update-check").start {
-            val news = runCatching { DailyCheck.run(store, Updater()) }.getOrNull() ?: return@start
-            news.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
-            news.newer?.let {
-                say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update"))
-                updateWaiting = it
-                footer()
+            var first = true
+            while (true) {
+                val news = runCatching { DailyCheck.run(store, Updater(), force = first) }.getOrNull()
+                first = false
+                news?.withdrawn?.let { say(theme.warning("This version, ${Version.VERSION}, was withdrawn: $it") + theme.muted(" · /update")) }
+                news?.newer?.takeIf { it != updateWaiting }?.let {
+                    say(theme.muted("Orknux Shell ") + theme.accent(it) + theme.muted(" is out: ") + theme.accent("/update"))
+                    updateWaiting = it
+                    footer()
+                }
+                try {
+                    Thread.sleep(Updater.CHECK_EVERY)
+                } catch (_: InterruptedException) {
+                    return@start
+                }
             }
         }
     }
@@ -1800,7 +1924,7 @@ class Interactive(
         val markdown = Markdown(theme, { width() }, links)
         api.sessionLines(sessionId).forEach { line ->
             when (line.kind) {
-                "USER" -> say(theme.accent("› ") + theme.text(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3)))
+                "USER" -> userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3)).forEach(::say)
                 "AGENT" -> markdown.render(line.content).removeSuffix("\n").split('\n').forEach(::say)
                 "TOOL" -> {
                     say(theme.success("●") + " " + theme.bold(line.actor ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20)))
@@ -1949,7 +2073,7 @@ class Interactive(
      * One of [items], chosen with the arrow keys and Enter - or by number off
      * a terminal that cannot draw the list in place.
      */
-    private fun <T> chooseFrom(what: String, items: List<T>, current: Int = 0, label: (T) -> String): T? {
+    private fun <T> chooseFrom(what: String, items: List<T>, current: Int = 0, closeKey: Int? = null, label: (T) -> String): T? {
         if (items.isEmpty()) return null
         if (!::region.isInitialized || !region.ansi) {
             say(theme.bold(what))
@@ -1966,6 +2090,7 @@ class Interactive(
             theme = theme,
             rows = { terminal.height.takeIf { it > 0 } ?: 24 },
             width = ::width,
+            closeKey = closeKey,
         )
         val saved = terminal.enterRawMode()
         val chosen = try {
@@ -2084,6 +2209,10 @@ class Interactive(
 
         /** How long the command door may take to open at the start before the bar says it is not open. */
         const val DEVICE_GRACE_MILLIS = 15_000L
+
+        /** Ctrl+T: the sessions of this chat, opened and closed again. */
+        const val SESSIONS_KEY = 20
+        const val SESSION_COUNT_MILLIS = 5_000L
 
         /** How long the terminal has to say where the cursor is. */
         const val CURSOR_ANSWER_MILLIS = 300L

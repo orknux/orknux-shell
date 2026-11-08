@@ -188,7 +188,8 @@ class Updater(
     companion object {
         const val SITE = "https://orknux.ai"
         const val NOT_INSTALLED = "This Orknux Shell is not an installed build (it runs from classes, or on a platform nothing is published for), so it cannot update itself."
-        val DAY: Duration = Duration.ofHours(24)
+        /** How often a running Shell looks again; it also looks at every start. Releases come more often than daily. */
+        val CHECK_EVERY: Duration = Duration.ofHours(1)
 
         /** `ORKNUX_SHELL_UPDATE_URL` points the check at another site, for testing one. */
         fun siteUrl(env: Map<String, String> = System.getenv()): String = env["ORKNUX_SHELL_UPDATE_URL"]?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: SITE
@@ -280,16 +281,17 @@ class Updater(
 data class UpdateNews(val newer: String?, val withdrawn: String?)
 
 /**
- * The look for an update at the start of a chat: orknux.ai at most once a day,
- * and in between, what the last look found - so a day that does not ask still
+ * The look for an update: orknux.ai at every start and then every hour - a
+ * look once a day kept a version released that morning unsaid all day, even
+ * across restarts - and in between, what the last look found - so a day that does not ask still
  * says a newer version is out. Never updates anything; a failure says nothing,
  * because a Shell offline is not news.
  */
 object DailyCheck {
-    fun run(store: ConfigStore, updater: Updater, now: Long = System.currentTimeMillis(), env: Map<String, String> = System.getenv()): UpdateNews? {
+    fun run(store: ConfigStore, updater: Updater, now: Long = System.currentTimeMillis(), env: Map<String, String> = System.getenv(), force: Boolean = false): UpdateNews? {
         val config = store.load()
         if (Updater.checksOff(config, env) || updater.platform == null) return null
-        val due = config.updateCheckedAt?.let { now - it >= Updater.DAY.toMillis() || it > now } ?: true
+        val due = force || config.updateCheckedAt?.let { now - it >= Updater.CHECK_EVERY.toMillis() || it > now } ?: true
         if (!due) {
             val known = config.updateLatest ?: return null
             return if (Versions.compare(known, Version.VERSION).let { it > 0 }) UpdateNews(known, null) else null

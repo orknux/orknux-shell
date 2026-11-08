@@ -4,6 +4,26 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.17
+
+### Added
+
+- The status bar counts this chat's subagent sessions - "2 subagents Ctrl+T" -
+  and Ctrl+T opens the list /sessions shows, at the prompt or while the agent
+  works; Ctrl+T again closes it.
+
+### Changed
+
+- A session chosen in /sessions is read here, in the terminal, not opened in
+  the browser: its transcript written out, and a line saying what you write
+  still goes to this chat. /sessions afterwards lists the same family, from
+  this chat's session, the one being read marked and highlighted; choosing
+  this chat takes you back to it. /orkx-web-session still opens the log in
+  the browser.
+- The Shell looks for a newer version at every start and then every hour,
+  rather than once a day: a version released in the morning went unsaid all
+  day, through restarts.
+
 ## 1.0.16
 
 ### Changed

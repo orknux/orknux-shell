@@ -16,6 +16,8 @@ class Picker(
     private val theme: Theme,
     private val rows: () -> Int,
     private val width: () -> Int,
+    /** A key that closes the list as Esc does: the one that opened it, so pressing it again takes it away. */
+    private val closeKey: Int? = null,
 ) {
     /** How many rows the list took when it was last drawn: what it pushed the screen up by, less one. */
     var lastHeight = 0
@@ -98,7 +100,7 @@ class Picker(
                     c < 0 -> return null
                     c == 13 || c == 10 -> return at to ticked.toSet()
                     many && c == ' '.code -> if (!ticked.remove(at)) ticked.add(at)
-                    c == 3 || c == 'q'.code -> return null
+                    c == 3 || c == 'q'.code || c == closeKey -> return null
                     c == 27 -> when (escape()) {
                         "[A", "OA" -> at = (at - 1).coerceAtLeast(0)
                         "[B", "OB" -> at = (at + 1).coerceAtMost(labels.lastIndex)
