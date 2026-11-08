@@ -1244,6 +1244,7 @@ class Interactive(
             "goal" -> goal(argument)
             "update" -> update()
             "answer" -> answerQuestions(conversation, askedFor = true)
+            "sessions" -> sessions()
             "orkx-web-chat" -> openInBrowser(
                 "this chat",
                 "/chat/" + (conversation.chat?.id ?: throw OrknuxException("There is no chat yet: it starts with your first message.")),
@@ -1259,6 +1260,33 @@ class Interactive(
                     (conversation.agent?.id ?: throw OrknuxException("No agent is chosen in this chat yet: /agent picks one.")) + "/settings",
             )
         }
+    }
+
+    /**
+     * The chat's sessions: its own, every agent it asked, and the @agent side
+     * chats - active ones first, each with its agent, what it is about and
+     * what it spent. Choosing one opens its log in the browser.
+     */
+    private fun sessions() {
+        val own = conversation.llmSessionId ?: throw OrknuxException("There is no session yet: it starts with your first message.")
+        val found = buildList {
+            api.session(own)?.let { add(it to "this chat") }
+            api.subagents(own).forEach { add(it to "asked") }
+            sideChats.values.mapNotNull { it.llmSessionId }.forEach { id -> api.session(id)?.let { add(it to "@agent") } }
+        }.sortedByDescending { it.first.active }
+        if (found.isEmpty()) {
+            say(theme.muted("No sessions found for this chat."))
+            return
+        }
+        // "Active" as the server means it - an agent at work in it now, or a moment ago - not a claim that a turn is running.
+        val active = found.count { it.first.active }
+        say(theme.bold("Sessions of this chat") + theme.muted(" · ${found.size}, $active active"))
+        val chosen = chooseFrom("Sessions", found) { (s, kind) ->
+            (if (s.active) theme.warning("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" ($kind)") +
+                theme.muted(" · ↑${TurnRenderer.tokens(s.inputTokens)} ↓${TurnRenderer.tokens(s.outputTokens)}" + (s.cost?.let { " · $it" } ?: "") +
+                    " · " + TurnRenderer.oneLine(s.about))
+        } ?: return
+        openInBrowser("the session log of ${chosen.first.agent}", "/workspace/${conversation.workspace.id}/sessions/${chosen.first.sessionId}")
     }
 
     /** Opens a page of the server in the browser, and says its address too - clickable where the terminal draws links. */

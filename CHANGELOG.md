@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Added
+
+- `/sessions` lists every session of this chat - its own, those of the agents
+  it asked, and your @agent side chats - active ones first, each with its
+  agent, what it was asked and what it spent; choose one to open its log in
+  the browser.
+
 ## 1.0.10
 
 ### Added

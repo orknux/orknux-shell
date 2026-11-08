@@ -15,6 +15,7 @@ object SlashCommands {
         SlashCommand("thinking", "[collapsed|expanded|hidden]", "The last turn in full - thinking and tool calls (also Ctrl+O) - or set how thinking is shown"),
         SlashCommand("effort", "[level|default]", "The model's reasoning effort for this chat"),
         SlashCommand("subagents", "[n]", "The agents this conversation asked, or read one"),
+        SlashCommand("sessions", null, "Every session of this chat - its own and its agents' - active ones first; open one's log"),
         SlashCommand("review", "[--fix] [branch|path]", "Review the uncommitted changes, a branch, or a path"),
         SlashCommand("goal", "<what> until <condition> [max <n>] [reviewer <model>] | stop", "Work at a goal, judged each iteration, until it is met"),
         SlashCommand("answer", null, "Answer what the agent asked, where a question was left open"),

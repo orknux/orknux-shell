@@ -236,6 +236,24 @@ class Api(val client: OrknuxClient) {
         )
     }
 
+    /** Whether a session is running now, and what it spent: for /sessions, the chat's own session among its family. */
+    fun session(id: String): Subagent? = runCatching {
+        val one = client.graphql(
+            "query Session(\$id: ID!) { llmSession(id: \$id) { id title active agentDetails { agent } spent { inputTokens outputTokens cost } } }",
+            vars("id" to id),
+        ).get("llmSession") ?: return null
+        Subagent(
+            sessionId = id,
+            agent = one.get("agentDetails").str("agent") ?: "agent",
+            about = one.str("title") ?: "",
+            active = one.bool("active") ?: false,
+            depth = 0,
+            inputTokens = one.get("spent").double("inputTokens")?.toLong() ?: 0,
+            outputTokens = one.get("spent").double("outputTokens")?.toLong() ?: 0,
+            cost = one.get("spent").str("cost"),
+        )
+    }.getOrNull()
+
     /** A session's transcript, oldest first. */
     fun sessionLines(sessionId: String, size: Int = 200): List<SessionLine> =
         client.graphql(
