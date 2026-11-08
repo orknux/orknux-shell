@@ -407,6 +407,11 @@ class Interactive(
             turn(message)
             return true
         }
+        SlashCommands.unknown(text)?.let { word ->
+            val near = SlashCommands.nearest(word)
+            say(theme.warning("Unknown command /$word.") + theme.muted(near?.let { " Did you mean /$it? " } ?: " ") + theme.muted("/help lists them; nothing was sent."))
+            return true
+        }
         if (text.startsWith("@")) addressed(text)?.let { (agent, message) ->
             side(agent, message)
             return true
@@ -546,15 +551,22 @@ class Interactive(
     /** The keyboard while a turn runs: Ctrl+C or Esc interrupts, Ctrl+O shows the thinking, and a command waiting to be asked about is asked. */
     private fun keysDuringTurn() {
         val input = terminal.reader()
-        while (phase == Phase.TURN && !Thread.currentThread().isInterrupted) {
-            approvals.poll()?.let { ask(it); continue }
-            val c = try { input.read(50) } catch (failure: Exception) { Trace.log("key read failed: $failure"); return }
-            if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
-            when (c) {
-                3 -> interruptTurn()
-                15 -> showThinking()
-                27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
+        // Interrupted when the turn ends, in the middle of any read or peek: that is the way out, not an error.
+        try {
+            while (phase == Phase.TURN && !Thread.currentThread().isInterrupted) {
+                approvals.poll()?.let { ask(it); continue }
+                val c = input.read(50)
+                if (c != NonBlockingReader.READ_EXPIRED) Trace.log("key $c")
+                when (c) {
+                    3 -> interruptTurn()
+                    15 -> showThinking()
+                    27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) interruptTurn() else drainSequence(input)
+                }
             }
+        } catch (_: java.io.InterruptedIOException) {
+        } catch (_: InterruptedException) {
+        } catch (failure: Exception) {
+            Trace.log("key read failed: $failure")
         }
     }
 
@@ -888,15 +900,16 @@ class Interactive(
 
     private fun agent(argument: String?) {
         agents = api.agents(conversation.workspace.id).filter { it.enabled }
-        if (argument == null) {
-            agents.forEachIndexed { i, a ->
-                val current = a.id == (conversation.agent?.id ?: conversation.chat?.agentId)
-                say((if (current) theme.accent("› ") else "  ") + theme.muted("${i + 1}. ") + theme.text(a.name) + (a.description?.let { theme.muted(" - " + TurnRenderer.clip(TurnRenderer.oneLine(it), 70)) } ?: ""))
-            }
-            if (agents.isEmpty()) say(theme.muted("This workspace has no agent; add one in Orknux."))
+        if (agents.isEmpty()) {
+            say(theme.muted("This workspace has no agent; add one in Orknux."))
             return
         }
-        val chosen = SlashCommands.pick(agents, argument) { it.name } ?: throw OrknuxException("No agent \"$argument\" here.")
+        val now = agents.indexOfFirst { it.id == (conversation.agent?.id ?: conversation.chat?.agentId) }.coerceAtLeast(0)
+        val chosen = if (argument == null) {
+            chooseFrom("Agent", agents, now) { a -> theme.text(a.name) + (a.description?.let { theme.muted(" - " + TurnRenderer.oneLine(it)) } ?: "") } ?: return
+        } else {
+            SlashCommands.pick(agents, argument) { it.name } ?: throw OrknuxException("No agent \"$argument\" here.")
+        }
         conversation.choose(chosen)
         skills = null
         remember()
@@ -905,13 +918,13 @@ class Interactive(
 
     private fun workspace(argument: String?) {
         workspaces = api.workspaces()
-        if (argument == null) {
-            workspaces.forEachIndexed { i, w ->
-                say((if (w.id == conversation.workspace.id) theme.accent("› ") else "  ") + theme.muted("${i + 1}. ") + theme.text(w.name))
-            }
-            return
+        val now = workspaces.indexOfFirst { it.id == conversation.workspace.id }.coerceAtLeast(0)
+        val chosen = if (argument == null) {
+            chooseFrom("Workspace", workspaces, now) { w -> theme.text(w.name) } ?: return
+        } else {
+            SlashCommands.pick(workspaces, argument) { it.name } ?: throw OrknuxException("No workspace \"$argument\".")
         }
-        val chosen = SlashCommands.pick(workspaces, argument) { it.name } ?: throw OrknuxException("No workspace \"$argument\".")
+        if (chosen.id == conversation.workspace.id) return
         conversation.workspace = chosen
         agents = api.agents(chosen.id).filter { it.enabled }
         conversation.agent = agents.firstOrNull { it.id == config.agentId }
@@ -928,9 +941,13 @@ class Interactive(
             ?: throw OrknuxException("This workspace has no skill marker set, so a skill cannot be named in a message.")
         val all = api.skills(conversation.workspace.id, conversation.agent).also { skills = it }
         if (argument == null) {
-            if (all.isEmpty()) say(theme.muted("No skill is within this agent's reach."))
-            all.forEach { s -> say("  " + theme.accent("/" + s.key) + theme.muted("  " + (s.description?.let { TurnRenderer.clip(TurnRenderer.oneLine(it), 80) } ?: s.name))) }
-            if (all.isNotEmpty()) say(theme.muted("Use one: /<key> [message] at the start, or ${marker}<key> anywhere in a message."))
+            if (all.isEmpty()) {
+                say(theme.muted("No skill is within this agent's reach."))
+                return
+            }
+            // Chosen, it is put on the line to say what it should work on: /key, then the message.
+            val picked = chooseFrom("Skill", all) { s -> theme.accent("/" + s.key) + theme.muted("  " + (s.description?.let { TurnRenderer.oneLine(it) } ?: s.name)) } ?: return
+            prefill = "/${picked.key} "
             return
         }
         val key = argument.substringBefore(' ')
@@ -1055,6 +1072,12 @@ class Interactive(
     private fun effort(argument: String?) {
         val chat = conversation.chat
         val offered = chat?.let { runCatching { api.efforts(it.id) }.getOrDefault(emptyList()) }
+        if (argument == null && !offered.isNullOrEmpty()) {
+            val levels = offered + "default"
+            val now = levels.indexOf(conversation.effort ?: "default").coerceAtLeast(0)
+            val picked = chooseFrom("Reasoning effort", levels, now) { theme.text(it) } ?: return
+            return effort(picked)
+        }
         if (argument == null) {
             say(theme.muted("Reasoning effort: ") + theme.text(conversation.effort ?: "the model's own"))
             when {
@@ -1104,20 +1127,16 @@ class Interactive(
             say(theme.muted("No subagents in this conversation yet: none was asked, and no @agent message was sent."))
             return
         }
-        if (argument == null) {
-            listed.forEachIndexed { i, s ->
-                val status = when (s.status) {
-                    "running" -> theme.warning("running")
-                    else -> theme.success(s.status)
-                }
-                say("  " + theme.accent("${i + 1}.") + " " + theme.bold(s.agent) + theme.muted(if (s.label == "@") " (@)" else "") + " " + status +
-                    theme.muted(" · ${s.tokens} · ") + TurnRenderer.clip(TurnRenderer.oneLine(s.about), width() - s.agent.length - 40))
-            }
-            say(theme.muted("/subagents <n> reads one."))
-            return
+        val chosen = if (argument == null) {
+            chooseFrom("Subagents", listed) { s ->
+                val status = if (s.status == "running") theme.warning("running") else theme.success(s.status)
+                theme.text(s.agent) + theme.muted(if (s.label == "@") " (@)" else "") + " " + status +
+                    theme.muted(" · ${s.tokens} · " + TurnRenderer.oneLine(s.about))
+            } ?: return
+        } else {
+            val n = argument.toIntOrNull()?.takeIf { it in 1..listed.size } ?: throw OrknuxException("There is no subagent $argument.")
+            listed[n - 1]
         }
-        val n = argument.toIntOrNull()?.takeIf { it in 1..listed.size } ?: throw OrknuxException("There is no subagent $argument.")
-        val chosen = listed[n - 1]
         say(theme.bold(theme.accent(chosen.agent)) + theme.muted(" - " + TurnRenderer.oneLine(chosen.about)))
         chosen.show()
     }
@@ -1271,12 +1290,35 @@ class Interactive(
 
     // ---- small things ------------------------------------------------------------------------
 
-    private fun <T> chooseFrom(what: String, items: List<T>, label: (T) -> String): T? {
-        say(theme.bold(what))
-        items.forEachIndexed { i, item -> say("  " + theme.accent("${i + 1}.") + " " + label(item)) }
-        val answer = ask(theme.muted("Number (Enter to cancel) › "))
-        if (answer.isEmpty()) return null
-        return SlashCommands.pick(items, answer) { stripAnsi(label(it)) }
+    /**
+     * One of [items], chosen with the arrow keys and Enter - or by number off
+     * a terminal that cannot draw the list in place.
+     */
+    private fun <T> chooseFrom(what: String, items: List<T>, current: Int = 0, label: (T) -> String): T? {
+        if (items.isEmpty()) return null
+        if (!::region.isInitialized || !region.ansi) {
+            say(theme.bold(what))
+            items.forEachIndexed { i, item -> say("  " + theme.accent("${i + 1}.") + " " + label(item)) }
+            val answer = ask(theme.muted("Number (Enter to cancel) › "))
+            if (answer.isEmpty()) return null
+            return SlashCommands.pick(items, answer) { stripAnsi(label(it)) }
+        }
+        val picker = Picker(
+            sink = { text -> terminal.writer().print(text); terminal.writer().flush() },
+            key = { timeout -> terminal.reader().read(if (timeout < 0) 0L else timeout) },
+            theme = theme,
+            rows = { terminal.height.takeIf { it > 0 } ?: 24 },
+            width = ::width,
+        )
+        val saved = terminal.enterRawMode()
+        val chosen = try {
+            synchronized(out) { picker.choose(what, items.map(label), current) }
+        } finally {
+            terminal.attributes = saved
+        }
+        // The list pushed the screen up while it was open; the rows come back, the prompt above the bar.
+        pullDown(picker.lastHeight - 1)
+        return chosen?.let { items[it] }
     }
 
     private fun showTheme() {

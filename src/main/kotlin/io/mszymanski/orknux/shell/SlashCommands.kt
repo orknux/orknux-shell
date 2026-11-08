@@ -28,7 +28,34 @@ object SlashCommands {
         SlashCommand("quit", null, "Leave (also Ctrl+D)"),
     )
 
-    val NAMES: List<String> = ALL.map { it.name } + "exit"
+    /** Other spellings people type for a command; not offered in completion. */
+    val ALIASES: Map<String, String> = mapOf("exit" to "quit", "agents" to "agent", "workspaces" to "workspace", "skills" to "skill", "chats" to "resume")
+
+    val NAMES: List<String> = ALL.map { it.name } + ALIASES.keys
+
+    /**
+     * A word after a slash that is no command: a typo, most likely, said as such
+     * rather than sent to the agent as a message. A path - another slash in it,
+     * or a dot - is not one.
+     */
+    fun unknown(line: String): String? {
+        val word = Regex("""^/([A-Za-z][\w-]*)(\s|$)""").find(line.trim())?.groupValues?.get(1) ?: return null
+        return word.takeIf { it.lowercase() !in NAMES }
+    }
+
+    /** The command most like [word], for "did you mean". */
+    fun nearest(word: String): String? = ALL.map { it.name }.minByOrNull { distance(it, word.lowercase()) }
+        ?.takeIf { distance(it, word.lowercase()) <= 2 || it.startsWith(word.lowercase()) }
+
+    private fun distance(a: String, b: String): Int {
+        val d = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) d[i][0] = i
+        for (j in 0..b.length) d[0][j] = j
+        for (i in 1..a.length) for (j in 1..b.length) {
+            d[i][j] = minOf(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+        }
+        return d[a.length][b.length]
+    }
 
     /** Null where the line is not a command: no slash, or a path like `/etc/hosts is broken` - a known name is needed. */
     fun parse(line: String): Slash? {
@@ -38,7 +65,7 @@ object SlashCommands {
         val name = body.substringBefore(' ').substringBefore('\t').lowercase()
         if (name !in NAMES) return null
         val argument = body.substring(name.length).trim().takeIf { it.isNotEmpty() }
-        return Slash(if (name == "exit") "quit" else name, argument)
+        return Slash(ALIASES[name] ?: name, argument)
     }
 
     /** The commands a typed prefix could still become, for completion. */
