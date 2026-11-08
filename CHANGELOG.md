@@ -8,8 +8,8 @@ refuses a tag with no section here.
 
 ### Added
 
-- Questions an agent puts to you with ask_person are a list to choose from
-  - with a row for your own words, and Space to tick several where the
+- Questions an agent puts to you with ask_person are a list to choose from,
+  with a row for your own words and Space to tick several where the
   question takes more than one. The agent's next turn follows as soon as you
   answer. Esc leaves a question open; `/answer` comes back to it.
 - Tables in answers are drawn with borders, each column as wide as its widest
