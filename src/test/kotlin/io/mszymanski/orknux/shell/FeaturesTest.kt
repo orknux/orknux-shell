@@ -170,8 +170,10 @@ class FeaturesTest {
         assertEquals("▸ Thought for 2.0s  (Ctrl+O to read)", out.lines[0])
         assertTrue(Regex("""✓ terminal_run ls · \d+\.\ds · exit 0 · a""").matches(out.lines[1]), out.lines[1])
         assertTrue(out.lines[2].startsWith("▸ Thought for"), out.lines[2])
-        assertEquals("Done.", out.lines[3])
-        assertEquals(4, out.lines.size)
+        // A blank line where the work ends and the answer begins.
+        assertEquals("", out.lines[3])
+        assertEquals("Done.", out.lines[4])
+        assertEquals(5, out.lines.size)
     }
 
     @Test
@@ -181,7 +183,7 @@ class FeaturesTest {
             handle(ChatEvent.Thinking("one\ntwo"))
             handle(ChatEvent.Chunk("x\n"))
         }
-        assertEquals(listOf("▾ Thought", "  │ one", "  │ two", "x"), expanded.lines.map { it.replace(Regex(" for \\d+\\.\\ds"), "") })
+        assertEquals(listOf("▾ Thought", "  │ one", "  │ two", "", "x"), expanded.lines.map { it.replace(Regex(" for \\d+\\.\\ds"), "") })
         val hidden = Recorder()
         TurnRenderer(plain, hidden, "hidden").apply {
             handle(ChatEvent.Thinking("secret"))

@@ -18,6 +18,9 @@ class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth 
         else -> foreground(colours.getValue(name), depth)
     }
 
+    /** A colour of the theme as #rrggbb, for styles written in another syntax - the line editor's. */
+    fun hex(name: String): String = colours.getValue(name)
+
     fun paint(name: String, text: String): String = if (depth == ColourDepth.NONE) text else "${fg(name)}$text$RESET"
 
     fun accent(text: String) = paint("accent", text)

@@ -197,6 +197,27 @@ class TurnRenderer(
     /** When the thinking now streaming began, for the live block's clock; 0 when none is. */
     val thinkingSince: Long get() = if (thinking.isEmpty()) 0 else thinkingStarted
 
+    /** What was written last: the work (thinking, tool calls, notes) or the answer. */
+    private enum class Kind { WORK, ANSWER }
+    private var lastKind: Kind? = null
+
+    /**
+     * Lines of one kind, with a blank line where the kind changes: the work
+     * the agent did and the answer it gave read as two blocks, not one run.
+     */
+    private fun write(kind: Kind, lines: List<String>) {
+        if (lines.isEmpty()) return
+        if (lastKind != null && lastKind != kind) out.line("")
+        lastKind = kind
+        lines.forEach(out::line)
+    }
+
+    private fun work(line: String) = write(Kind.WORK, listOf(line))
+
+    private fun answerLines(rendered: String) {
+        if (rendered.isNotEmpty()) write(Kind.ANSWER, rendered.removeSuffix("\n").split('\n'))
+    }
+
     fun handle(event: ChatEvent) {
         if (event !is ChatEvent.Thinking && event !is ChatEvent.Thought) {
             closeThinking(null)
@@ -232,12 +253,12 @@ class TurnRenderer(
             is ChatEvent.Called -> {
                 val call = calls.remove(event.at)
                 val took = callStarted.remove(event.at)?.let { System.currentTimeMillis() - it }
-                out.line(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
+                work(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width()))
                 out.phase("thinking", "Thinking")
             }
             is ChatEvent.Chunk -> {
                 answer.append(event.text)
-                markdown.feed(event.text).let { rendered -> if (rendered.isNotEmpty()) rendered.removeSuffix("\n").split('\n').forEach(out::line) }
+                answerLines(markdown.feed(event.text))
                 out.phase("writing-answer", "Writing")
             }
             is ChatEvent.Answered -> {
@@ -247,13 +268,13 @@ class TurnRenderer(
             is ChatEvent.Done -> flush()
             is ChatEvent.Error -> {
                 flush()
-                out.line(theme.danger("✗ " + event.reason))
+                work(theme.danger("✗ " + event.reason))
             }
             is ChatEvent.Compacting -> out.phase("compacting", "Compacting the conversation")
-            is ChatEvent.Compacted -> out.line(theme.muted("Compacted ${event.replaced} earlier turns into a summary (${tokens(event.tokens)} tokens)."))
-            is ChatEvent.Drew -> markdown.render(event.markdown).removeSuffix("\n").split('\n').forEach(out::line)
-            is ChatEvent.Filed -> out.line(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
-            is ChatEvent.Said -> out.line(theme.muted(event.text))
+            is ChatEvent.Compacted -> work(theme.muted("Compacted ${event.replaced} earlier turns into a summary (${tokens(event.tokens)} tokens)."))
+            is ChatEvent.Drew -> answerLines(markdown.render(event.markdown))
+            is ChatEvent.Filed -> work(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
+            is ChatEvent.Said -> work(theme.muted(event.text))
             else -> {}
         }
     }
@@ -261,8 +282,7 @@ class TurnRenderer(
     /** What is left of the answer, and the links it drew, numbered, once at the end. */
     fun flush() {
         closeThinking(null)
-        val rest = markdown.finish()
-        if (rest.isNotEmpty()) rest.removeSuffix("\n").split('\n').forEach(out::line)
+        answerLines(markdown.finish())
     }
 
     /** The answer's links, numbered for `/open`; nothing where there are none. */
@@ -286,7 +306,7 @@ class TurnRenderer(
         justClosed = true
         val block = ThinkingBlock(text, millis)
         blocks += block
-        fold(block, thinkingMode, theme, out.width()).forEach(out::line)
+        write(Kind.WORK, fold(block, thinkingMode, theme, out.width()))
     }
 
     companion object {
