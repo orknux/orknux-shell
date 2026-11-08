@@ -4,6 +4,26 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.35
+
+### Fixed
+
+- A followed subagent was declared finished a few seconds in, while it
+  worked on: the Shell's own poll never asked the server whether it was
+  working, and took the silence for no. With that, its live line vanished -
+  "Reading the prompt" among it - and the typing line said it had finished.
+  Both stay now for as long as the server says it works.
+- A message sent into a subagent's turn is shown once more as "✓ read: …"
+  when it has read it, not as a second copy of the message.
+- A followed subagent's thinking streams live under its spinner where the
+  details are expanded, as this chat's own does, and is written into the
+  transcript only once it is done - written as it began, it stayed as its
+  first words.
+- A subagent followed after this chat's own turn has ended is followed all
+  the same: its spinner, its typing line and Enter into its turn, until it
+  finishes or Ctrl+T, Enter goes back. It used to be lines appearing above a
+  prompt, with nothing to say what it was doing or where to write to it.
+
 ## 1.0.34
 
 ### Fixed

@@ -504,6 +504,12 @@ class Interactive(
             countSessions()
             footer()
             alignToFoot()
+            // A working subagent on the screen with no turn of this chat's going: followed as a turn is, until it
+            // finishes or the screen goes back - the live block does not belong to this chat's turn alone.
+            if (viewing != Transcript.MAIN && viewed?.working == true) {
+                followAtPrompt()
+                continue
+            }
             val line = try {
                 phase = Phase.READING
                 if (approvals.isNotEmpty()) continue
@@ -1033,6 +1039,8 @@ class Interactive(
         // Interrupted when the turn ends, in the middle of any read or peek: that is the way out, not an error.
         try {
             while (phase == Phase.TURN && !Thread.currentThread().isInterrupted) {
+                // Following from the prompt ends with the subagent, or with the screen back on this chat.
+                if (promptFollow && (viewing == Transcript.MAIN || viewed?.working != true)) break
                 approvals.poll()?.let { ask(it); continue }
                 val read = input.read(50)
                 if (read != NonBlockingReader.READ_EXPIRED) Trace.log("key $read")
@@ -1044,7 +1052,8 @@ class Interactive(
                     else -> read
                 }
                 when (c) {
-                    3 -> interruptTurn()
+                    // Following from the prompt there is nothing of this chat's to interrupt: Ctrl+C and Esc go back.
+                    3 -> if (promptFollow) showMain() else interruptTurn()
                     DETAILS -> toggleDetails()
                     SEND_NOW -> sendNow()
                     SESSIONS -> {
@@ -1057,7 +1066,7 @@ class Interactive(
                     }
                     // Esc closes the list of commands when it is open, and interrupts the turn when it is not.
                     27 -> if (input.peek(30) == NonBlockingReader.READ_EXPIRED) {
-                        if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else interruptTurn()
+                        if (aheadChoices.isNotEmpty()) { aheadDismissed = ahead.toString(); aheadTyped() } else if (promptFollow) showMain() else interruptTurn()
                     } else when (sequence(input)) {
                         "[A", "OA" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt - 1).coerceAtLeast(0); region.redraw() }
                         "[B", "OB" -> if (aheadChoices.isNotEmpty()) { aheadAt = (aheadAt + 1).coerceAtMost(aheadChoices.lastIndex); region.redraw() }
@@ -1189,6 +1198,46 @@ class Interactive(
         // Room after it, as after anything said: the turn's first piece of work writes none of its own.
         say("", owner = Transcript.MAIN)
     }
+
+    /**
+     * Following a working subagent while no turn of this chat's is going: the
+     * live block all the same - its phase line, the typing line, Enter into
+     * its turn, Ctrl+O, Ctrl+T - on the keys a turn reads, until it finishes or
+     * the screen goes back to this chat. Without this, a subagent followed
+     * after this chat's turn had ended was lines appearing above a prompt, with
+     * nothing to say what it was doing or where to write to it.
+     */
+    private fun followAtPrompt() {
+        promptFollow = true
+        phase = Phase.TURN
+        val saved = terminal.enterRawMode()
+        val raw = terminal.attributes
+        raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
+        terminal.attributes = raw
+        region.thinkingHint = detailsHint()
+        region.start { below() }
+        val ticker = Thread.ofPlatform().daemon().start {
+            var n = 0
+            while (phase == Phase.TURN) {
+                tickTurn()
+                if (++n % 10 == 0) footer()
+                try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+            }
+        }
+        try {
+            keysDuringTurn()
+        } finally {
+            phase = Phase.OTHER
+            promptFollow = false
+            ticker.interrupt()
+            region.stop()
+            terminal.attributes = saved
+            footer()
+        }
+    }
+
+    /** Whether the live block is up for a followed subagent rather than a turn of this chat's. */
+    @Volatile private var promptFollow = false
 
     private fun drainSequence(input: NonBlockingReader) {
         while (input.peek(5) >= 0) input.read(5)
@@ -1788,6 +1837,7 @@ class Interactive(
         viewing = Transcript.MAIN
         viewed = null
         region.focused = false
+        region.focusDetail = emptyList()
         region.focusPhase(null, null)
         repaint()
         footer()
@@ -1829,9 +1879,12 @@ class Interactive(
                     } else {
                         val all = api.sessionLines(s.sessionId, FOLLOW_LINES)
                         val from = followed[s.sessionId] ?: 0
-                        if (all.size > from && viewing == s.sessionId) {
-                            all.drop(from).forEach { line -> sessionLine(line, markdown).forEach { (text, view) -> say(text, view, s.sessionId) } }
-                            followed[s.sessionId] = all.size
+                        // A thought still being written grows on the server after it first appears: written into the
+                        // transcript then, it would stay as its first words. It is shown live until something follows it.
+                        val settled = if (viewed?.working == true && all.lastOrNull()?.kind == "THINKING") all.dropLast(1) else all
+                        if (settled.size > from && viewing == s.sessionId) {
+                            settled.drop(from).forEach { line -> sessionLine(line, markdown).forEach { (text, view) -> say(text, view, s.sessionId) } }
+                            followed[s.sessionId] = settled.size
                         }
                         if (viewing == s.sessionId) followedPhase(s.sessionId, all.lastOrNull(), all.size)
                     }
@@ -1859,6 +1912,7 @@ class Interactive(
         // The server says exactly whether the ask's turn is going; nothing is drawn once it is not.
         val finished = viewed?.working == false
         val w = width()
+        region.focusDetail = emptyList()
         when {
             finished -> region.focusPhase(null, null)
             writing?.promptTotal != null && writing.promptTotal > 0 -> {
@@ -1875,7 +1929,12 @@ class Interactive(
                 val tool = last.actor?.takeIf { it.isNotBlank() } ?: "tool"
                 region.focusPhase("call:$lines", "Running " + theme.accent(tool) + ": " + theme.muted(TurnRenderer.argumentSummary(last.content, w - tool.length - 24)))
             }
-            last?.kind == "THINKING" -> region.focusPhase("thinking:$lines", theme.thinking("Thinking"))
+            last?.kind == "THINKING" -> {
+                region.focusPhase("thinking:$lines", theme.thinking("Thinking"))
+                // Its text as it streams, where the details are shown - as this chat's own thinking is drawn live.
+                region.focusDetail = if (unfolded) TurnRenderer.wrapped(last.content, w - 4).takeLast(4).map { "  " + theme.muted("│ ") + theme.dim(theme.muted(it)) } else emptyList()
+                return
+            }
             // A tool answered and nothing written since: the model has not begun on it, or the server has not said.
             else -> region.focusPhase("model", "Waiting for the model")
         }
@@ -2308,7 +2367,10 @@ class Interactive(
         val w = width()
         fun both(lines: List<String>) = listOf("" to View.BOTH) + lines.map { it to View.BOTH }
         return when (line.kind) {
-            "USER" -> both(userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), w * 3)))
+            // What the person wrote into the turn comes back as a USER line in their name once the agent has read it:
+            // drawn as read, not as a second copy of what the screen already shows they sent.
+            "USER" -> if (line.actor != null && line.actor == config.user) both(listOf(theme.success("✓ ") + theme.muted("read: " + TurnRenderer.oneLine(line.content))))
+            else both(userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), w * 3)))
             "AGENT" -> both(markdown.render(line.content).removeSuffix("\n").split('\n'))
             "TOOL" -> {
                 val tool = line.actor?.takeIf { it.isNotBlank() } ?: "tool"

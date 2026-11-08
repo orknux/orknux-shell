@@ -79,6 +79,9 @@ class LiveRegion(
 
     /** Whether another session is on the screen, followed: its phase is drawn, and this chat's turn is not. */
     @Volatile var focused = false
+
+    /** Lines under the followed session's phase: the tail of a thought still being written, where details are shown. */
+    @Volatile var focusDetail: List<String> = emptyList()
     private var focusKey: String? = null
     private var focusText: String? = null
     private var focusStarted = 0L
@@ -236,6 +239,8 @@ class LiveRegion(
         // which goes on unseen meanwhile. Nothing where it has finished, as a finished turn draws nothing.
         if (focused) {
             focusText?.let { out += spinner + it + theme.muted(" · ${(clock() - focusStarted) / 1000}s") }
+            // The followed session's thinking as it streams, under its header, where the details are shown.
+            out += focusDetail
             asking?.let { out += it }
             out += below()
             return out.map { clip(it, w) }

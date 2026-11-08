@@ -294,7 +294,7 @@ class Api(val client: OrknuxClient) {
     /** Whether a session is running now, and what it spent: for /sessions, the chat's own session among its family. */
     fun session(id: String): Subagent? = runCatching {
         val one = client.graphql(
-            "query Session(\$id: ID!) { llmSession(id: \$id) { id title active agentDetails { agent } spent { inputTokens outputTokens cost } } }",
+            "query Session(\$id: ID!) { llmSession(id: \$id) { id title active working agentDetails { agent } spent { inputTokens outputTokens cost } } }",
             vars("id" to id),
         ).get("llmSession") ?: return null
         Subagent(
