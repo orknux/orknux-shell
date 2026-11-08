@@ -4,7 +4,7 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
-## Unreleased
+## 1.0.11
 
 ### Added
 
