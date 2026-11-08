@@ -56,11 +56,24 @@ class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth 
     fun dim(text: String) = if (depth == ColourDepth.NONE) text else "$DIM$text$NOT_BOLD"
     fun underline(text: String) = if (depth == ColourDepth.NONE) text else "$UNDERLINE$text$NOT_UNDERLINE"
 
+    /**
+     * A line of what the person wrote, on the `message` background from its
+     * start to the window's edge - erased to the edge in that colour rather than
+     * padded with spaces, so it fills whatever the width is. The colour is put
+     * back after every reset inside the line, which would end it.
+     */
+    fun message(line: String): String {
+        if (depth == ColourDepth.NONE) return line
+        val bg = background(colours.getValue("message"), depth)
+        return bg + line.replace(RESET, RESET + bg) + ERASE_TO_EDGE + RESET
+    }
+
     /** The background, where one is set; nothing by default, so the terminal's own shows. */
     fun background(): String = colours["background"]?.let { hex -> if (depth == ColourDepth.NONE) "" else background(hex, depth) } ?: ""
 
     companion object {
         const val RESET = "\u001b[0m"
+        const val ERASE_TO_EDGE = "\u001b[K"
         const val BOLD = "\u001b[1m"
         const val DIM = "\u001b[2m"
         const val NOT_BOLD = "\u001b[22m"
@@ -78,6 +91,8 @@ class Theme(overrides: Map<String, String> = emptyMap(), val depth: ColourDepth 
             "danger" to "#f87171",
             "thinking" to "#c4453d",
             "code" to "#c084fc",
+            // Behind what the person wrote: a shade lighter than a dark terminal's own, so a message stands apart.
+            "message" to "#26262b",
         )
 
         fun normalise(hex: String): String = "#" + hex.trim().removePrefix("#").lowercase()

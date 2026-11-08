@@ -4,6 +4,16 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.16
+
+### Changed
+
+- What you write stands apart from the rest: each message - and each command
+  typed - is on a background a shade lighter than the terminal's, from the
+  start of the line to the window's edge; in /resume's history and for the
+  messages queued during a turn too. It is the theme's `message` colour,
+  `/theme message #rrggbb` to change it.
+
 ## 1.0.15
 
 ### Added

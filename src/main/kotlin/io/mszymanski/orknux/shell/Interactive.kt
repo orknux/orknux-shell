@@ -434,7 +434,7 @@ class Interactive(
                 phase = Phase.OTHER
             }
             val text = line.replace("\\\n", "\n").trim()
-            if (text.isNotEmpty()) text.split('\n').forEachIndexed { i, l -> transcript.add((if (i == 0) prompt() else "  ") + l) }
+            if (text.isNotEmpty()) showSent(line, text)
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
             if (text.isNotEmpty()) lastBlank = false
@@ -451,7 +451,7 @@ class Interactive(
                 // What was written while that turn ran, sent now, each as if typed at the prompt.
                 while (queued.isNotEmpty()) {
                     val next = queued.removeAt(0)
-                    say(prompt() + next)
+                    userLines(next).forEach(::say)
                     lastBlank = false
                     if (!said(next)) return
                 }
@@ -537,6 +537,28 @@ class Interactive(
     }
 
     private fun prompt(): String = theme.accent("› ")
+
+    /** A message the person wrote, as the conversation shows it: the prompt's mark, and on its own background. */
+    private fun userLines(text: String): List<String> =
+        text.split('\n').mapIndexed { i, l -> theme.message((if (i == 0) prompt() else "  ") + theme.text(l)) }
+
+    /**
+     * The line just entered, written again on the message background: the line
+     * editor left it as it was typed, on the rows above the cursor - [typed]
+     * as it was, to count them - and they are cleared and written over.
+     */
+    private fun showSent(typed: String, text: String) {
+        if (!region.ansi || theme.depth == ColourDepth.NONE) {
+            text.split('\n').forEachIndexed { i, l -> transcript.add((if (i == 0) prompt() else "  ") + l) }
+            return
+        }
+        val w = width()
+        val rows = typed.split('\n').sumOf { ((visibleLength(it) + 2 - 1) / w + 1).coerceAtLeast(1) }
+        terminal.writer().print("\u001b[${rows}A" + "\u001b[2K\u001b[1B".repeat(rows) + "\u001b[${rows}A\r")
+        terminal.writer().flush()
+        lastBlank = false
+        userLines(text).forEach(::say)
+    }
 
     private fun ask(prompt: String): String = try {
         reader.readLine(prompt).trim().also { lastBlank = false }
@@ -1609,7 +1631,7 @@ class Interactive(
             // Each piece with room around it, as a turn is drawn live; say() never makes it two blank lines.
             say("")
             when (m.role.lowercase()) {
-                "user" -> say(theme.accent("› ") + theme.text(m.content))
+                "user" -> userLines(m.content).forEach(::say)
                 "assistant" -> {
                     m.thinking?.takeIf { it.isNotBlank() }?.let { text ->
                         val block = ThinkingBlock(text, m.thinkingMillis ?: -1)
