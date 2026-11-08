@@ -77,8 +77,8 @@ class LiveRegion(
         private set
     private val held = mutableListOf<String>()
 
-    /** Whose turn the region shows, said before the spinner where it is not the conversation being read; null for none. */
-    @Volatile var owner: String? = null
+    /** While another session is followed, the line saying what it is doing; null for this chat's own turn. */
+    @Volatile var focus: (() -> String)? = null
 
     /** The thread whose lines go out at once while the region is set aside; the rest are held. */
     @Volatile private var through: Thread? = null
@@ -200,7 +200,14 @@ class LiveRegion(
         val w = (width() - 1).coerceAtLeast(10)
         // Room between the work written so far and what is happening now, as between the pieces of work.
         if (!afterBlank) out += ""
-        val spinner = theme.accent(frames[frame % frames.size]) + " " + (owner?.let { theme.muted("$it: ") } ?: "")
+        val spinner = theme.accent(frames[frame % frames.size]) + " "
+        // Another session followed: what it is doing, in place of this chat's turn, which goes on unseen meanwhile.
+        focus?.let { f ->
+            out += spinner + f()
+            asking?.let { out += it }
+            out += below()
+            return out.map { clip(it, w) }
+        }
         // The thinking shown live is under its own header, which carries the spinner: a second "Thinking" line
         // under it said the same thing twice.
         val thinkingNow = thinking != null && phaseKey == "thinking" && stopped == null

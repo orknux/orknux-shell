@@ -13,6 +13,9 @@ data class Usage(val inputTokens: Long = 0, val outputTokens: Long = 0, val cach
  * A chat is opened lazily, on the first message after a start or a `/clear`,
  * so that switching agents or workspaces before saying anything opens nothing.
  */
+/** The agent id the Shell gives My Claude Code, which is not an agent of the workspace. */
+const val CLAUDE_CODE = "claude-code"
+
 /** Characters to a token, for the guess the status bar shows while an answer streams. */
 private const val CHARS_PER_TOKEN = 4L
 
@@ -105,7 +108,24 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
     /** Switches agent: on the open chat where there is one, and for the next chat either way. */
     fun choose(next: Agent) {
         agent = next
+        claudeCode = false
         chat?.let { chat = api.chooseAgent(it.id, next.id) }
+    }
+
+    /**
+     * Whether this conversation is answered by the person's own Claude Code
+     * rather than an agent of the workspace: My Claude Code, as the agent
+     * picker in the browser offers it. Kept across /clear, as an agent is.
+     */
+    @Volatile
+    var claudeCode = false
+        private set
+
+    /** Hands the conversation to My Claude Code: the chat opened if it is not yet, and given to it. */
+    fun chooseClaudeCode() {
+        claudeCode = true
+        agent = Agent(CLAUDE_CODE, "My Claude Code", null, true, emptyList(), emptyList())
+        chat = api.chooseClaudeCode(open().id)
     }
 
     /** Puts the open chat in the server's mode for [mode]; nothing to do before a chat is open. */
@@ -122,8 +142,10 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
     }
 
     /** Opens the chat now, if it is not open yet. */
-    fun open(): Chat = chat ?: api.startChat(workspace.id, agent?.id).also { started ->
+    fun open(): Chat = chat ?: api.startChat(workspace.id, agent?.id?.takeUnless { claudeCode }).also { started ->
         chat = started
+        // A new conversation of one that was My Claude Code's is given to it as well.
+        if (claudeCode) runCatching { chat = api.chooseClaudeCode(started.id) }
         llmSessionId = started.llmSessionId
         if (agent == null && started.agentId != null) agent = Agent(started.agentId, started.agentName ?: "agent", null, true, emptyList(), emptyList())
         effort?.let { wanted -> runCatching { chat = api.setEffort(started.id, wanted) } }

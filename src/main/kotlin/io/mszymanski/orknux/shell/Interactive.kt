@@ -225,6 +225,8 @@ class Interactive(
 
     private fun remember() {
         val c = conversation
+        // My Claude Code is not an agent of the workspace to start the next Shell on.
+        if (c.claudeCode) return
         config = store.update {
             it.copy(workspaceId = c.workspace.id, workspace = c.workspace.name, agentId = c.agent?.id, agent = c.agent?.name, mode = c.mode)
         }
@@ -496,6 +498,9 @@ class Interactive(
                 }
                 if (sessionsAsked) {
                     sessionsAsked = false
+                    // No line is being read while the list is up: a redraw meanwhile must not write a prompt of its
+                    // own, which left the line editor a half-written row it marked with a "~".
+                    phase = Phase.OTHER
                     prefill = interrupted.partialLine?.takeIf { it.isNotEmpty() }
                     // The prompt's row, left behind by the interruption, gives way to the list; the line comes back after.
                     if (region.ansi) {
@@ -513,7 +518,11 @@ class Interactive(
                 phase = Phase.OTHER
             }
             val text = line.replace("\\\n", "\n").trim()
-            if (text.isNotEmpty()) showSent(line, text)
+            // A message goes to this chat's main session, so it is shown there: back to it first, where another is followed.
+            if (text.isNotEmpty() && viewing != Transcript.MAIN && SlashCommands.parse(text) == null) {
+                showMain()
+                userLines(text).forEach { say(it) }
+            } else if (text.isNotEmpty()) showSent(line, text)
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
             if (text.isNotEmpty()) lastBlank = false
@@ -650,7 +659,7 @@ class Interactive(
     /** Sends [text] in [into] - the main conversation unless an `@agent` message chose another - and draws the answer. */
     private fun turn(text: String, into: Conversation = conversation) {
         val output = object : TurnOutput {
-            override fun line(text: String) = say(text)
+            override fun line(text: String) = say(text, owner = Transcript.MAIN)
             override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) = region.phase(key, text)
             override fun thinking(text: String?) {
@@ -823,7 +832,7 @@ class Interactive(
      */
     private fun followWake(chatId: String, into: Conversation) {
         val output = object : TurnOutput {
-            override fun line(text: String) = say(text)
+            override fun line(text: String) = say(text, owner = Transcript.MAIN)
             override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) = region.phase(key, text)
             override fun thinking(text: String?) {
@@ -1294,14 +1303,15 @@ class Interactive(
      * is holding the keyboard. Written as it is - an OSC 8 link included, which
      * the line editor's own styling would strip.
      */
-    private fun say(text: String, view: View = View.BOTH) {
+    private fun say(text: String, view: View = View.BOTH, owner: String = viewing) {
         // A line is one row: text with newlines in it is its lines, each said, or the rows under it go uncounted.
         if ('\n' in text) {
-            text.removeSuffix("\n").split('\n').forEach { say(it.removeSuffix("\r"), view) }
+            text.removeSuffix("\n").split('\n').forEach { say(it.removeSuffix("\r"), view, owner) }
             return
         }
-        transcript.add(text, view)
-        if (!Transcript.shown(view, unfolded)) return
+        transcript.add(text, view, owner)
+        // Kept for its own session, and written only while that one is on the screen.
+        if (owner != viewing || !Transcript.shown(view, unfolded)) return
         // One blank line between things, never two: the renderer spaces its own pieces, and a notice said in the
         // middle of a turn (an interruption, an approval) spaces itself as well.
         val blank = stripAnsi(text).isBlank()
@@ -1331,8 +1341,8 @@ class Interactive(
 
     /** A piece of work, kept both ways; the screen shows the one [unfolded] chooses. */
     private fun sayEither(folded: List<String>, full: List<String>) {
-        folded.forEach { say(it, View.FOLDED) }
-        full.forEach { say(it, View.FULL) }
+        folded.forEach { say(it, View.FOLDED, Transcript.MAIN) }
+        full.forEach { say(it, View.FULL, Transcript.MAIN) }
     }
 
     /**
@@ -1359,7 +1369,7 @@ class Interactive(
     private fun repaint() {
         if (!::region.isInitialized || !region.ansi) return
         val rows = terminal.height.takeIf { it > 0 } ?: return
-        val lines = transcript.lines(unfolded)
+        val lines = transcript.lines(unfolded, viewing)
         val draw = {
             val w = terminal.writer()
             w.print(LiveRegion.SYNC_START + "\u001b[r\u001b[H\u001b[2J\u001b[3J")
@@ -1458,6 +1468,14 @@ class Interactive(
 
     /** What the bar says: what is going on, and - the right-hand part - the workspace one is in. */
     private fun statusParts(): Pair<String, String> {
+        // A session followed: its agent and what it has spent, rather than this chat's, which is not on the screen.
+        viewed?.let { v ->
+            return listOf(
+                theme.text(v.agent) + theme.muted(" (followed)"),
+                theme.muted("↑${TurnRenderer.tokens(v.inputTokens)} ↓${TurnRenderer.tokens(v.outputTokens)}") + (v.cost?.let { theme.muted(" · $it") } ?: ""),
+                theme.muted("Ctrl+T, Enter: back to main"),
+            ).joinToString(theme.muted(" · ")) to theme.muted("workspace ") + theme.text(conversation.workspace.name)
+        }
         val c = conversation
         val u = c.usage
         // Whether the agent can run commands on this computer: the door Orknux Shell keeps open to the server for it.
@@ -1564,7 +1582,6 @@ class Interactive(
         // What was being read belongs to the chat it was read from; another chat starts on its own.
         if (readingRoot != own) {
             reading = null
-            region.owner = null
             readingRoot = own
         }
         val found = buildList {
@@ -1584,7 +1601,8 @@ class Interactive(
         val active = found.count { it.session.active }
         say(theme.bold("Sessions of this chat") + theme.muted(" · ${found.size}, $active active"))
         val shown = found.indexOfFirst { if (reading == null) it.kind == MAIN else it.session.sessionId == reading }.coerceAtLeast(0)
-        val chosen = chooseFrom("Sessions", found, shown, closeKey = SESSIONS_KEY) { f ->
+        // Following another, the highlight starts on main - Ctrl+T, Enter is the way back; the one followed stays marked.
+        val chosen = chooseFrom("Sessions", found, if (reading != null) 0 else shown, closeKey = SESSIONS_KEY) { f ->
             val s = f.session
             (if (s.active) theme.success("● active ") else theme.muted("○ idle   ")) + theme.text(s.agent) + theme.muted(" (${f.kind})") +
                 (if (found.indexOf(f) == shown) theme.accent(" · reading") else "") +
@@ -1606,29 +1624,98 @@ class Interactive(
      */
     private fun open(found: Found) {
         val s = found.session
-        say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
-        say("")
         when {
-            found.kind == MAIN -> {
-                reading = null
-                conversation.chat?.let { printHistory(api.messages(it.id)) }
-            }
-            found.chat != null -> {
-                reading = s.sessionId
-                printHistory(api.messages(found.chat))
-            }
-            else -> {
-                reading = s.sessionId
-                printSession(s.sessionId)
-            }
-        }
-        // While another session is read, the live block - this chat's turn - says it is this chat's, not the one read.
-        region.owner = if (reading != null) "${conversation.agent?.name ?: "main"} (main)" else null
-        if (reading != null) {
-            say("")
-            say(theme.muted("You are reading ${s.agent}'s session. What you write still goes to this chat; /sessions or Ctrl+T to read another, or this chat again."))
+            found.kind == MAIN -> showMain()
+            else -> follow(found)
         }
     }
+
+    /** Back to this chat: the screen written again with its lines, those that came while another was followed too. */
+    private fun showMain() {
+        reading = null
+        viewing = Transcript.MAIN
+        viewed = null
+        region.focus = null
+        repaint()
+        footer()
+    }
+
+    /**
+     * Another session of this chat on the screen, followed as it goes: the
+     * screen written again with its lines - none, the first time, then its
+     * transcript so far - and every few moments what it has done since. The
+     * live block says what it is doing, and the status bar what it has spent.
+     * This chat's turn goes on meanwhile, kept and shown again on going back.
+     */
+    private fun follow(found: Found) {
+        val s = found.session
+        reading = s.sessionId
+        viewing = s.sessionId
+        viewed = s
+        region.focus = {
+            val v = viewed
+            theme.accent(s.agent) + theme.muted(" (${found.kind}) · ") +
+                (if (v?.active == true) theme.text(followedDoing ?: "working") else theme.muted("finished")) +
+                theme.dim(theme.muted(" · Ctrl+T sessions"))
+        }
+        repaint()
+        if (followed[s.sessionId] == null) {
+            say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
+            say(theme.muted("What you write goes to this chat's main session; Ctrl+T or /sessions goes back to it."))
+            say("")
+            followed[s.sessionId] = 0
+        }
+        footer()
+        val chat = found.chat
+        Thread.ofVirtual().name("orknux-follow-session").start {
+            val markdown = Markdown(theme, { width() }, links)
+            while (viewing == s.sessionId) {
+                runCatching {
+                    if (chat != null) {
+                        // A side chat is a chat: its history, once, and its own turns are drawn where they are sent.
+                        if (followed[s.sessionId] == 0) {
+                            printHistory(api.messages(chat))
+                            followed[s.sessionId] = -1
+                        }
+                    } else {
+                        val all = api.sessionLines(s.sessionId, FOLLOW_LINES)
+                        val from = followed[s.sessionId] ?: 0
+                        if (all.size > from && viewing == s.sessionId) {
+                            all.drop(from).forEach { line -> sessionLine(line, markdown).forEach { say(it, owner = s.sessionId) } }
+                            followed[s.sessionId] = all.size
+                            followedDoing = all.lastOrNull()?.let { doing(it) }
+                        }
+                    }
+                    api.session(s.sessionId)?.let { viewed = it }
+                    footer()
+                }
+                try {
+                    Thread.sleep(FOLLOW_MILLIS)
+                } catch (_: InterruptedException) {
+                    return@start
+                }
+            }
+        }
+    }
+
+    /** What a followed session is at, from the last thing it did. */
+    private fun doing(line: SessionLine): String = when (line.kind) {
+        "TOOL" -> "used " + (line.actor?.takeIf { it.isNotBlank() } ?: "a tool")
+        "THINKING" -> "thinking"
+        "AGENT" -> "writing"
+        "USER" -> "reading the question"
+        else -> "working"
+    }
+
+    /** The session on the screen: [Transcript.MAIN] for this chat's own, or the id of one followed from /sessions. */
+    @Volatile private var viewing: String = Transcript.MAIN
+
+    /** The followed session as last read, for the status bar and the live block. */
+    @Volatile private var viewed: Subagent? = null
+    @Volatile private var followedDoing: String? = null
+
+    /** How many of each followed session's lines have been written: -1 for a side chat whose history is. */
+    private val followed = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     /** The session /sessions last opened, and the chat's session it belongs to; null while this chat itself is read. */
     @Volatile private var reading: String? = null
@@ -1774,11 +1861,22 @@ class Interactive(
             say(theme.muted("This workspace has no agent; add one in Orknux."))
             return
         }
-        val now = agents.indexOfFirst { it.id == (conversation.agent?.id ?: conversation.chat?.agentId) }.coerceAtLeast(0)
+        // My Claude Code at the end, as the browser's picker has it, where this server offers it: the person's own
+        // Claude Code answering, through the Orknux channel plugin - said whether it is connected now.
+        val claude = api.claudeCode()?.takeIf { it.available }
+        val mine = claude?.let { Agent(CLAUDE_CODE, "My Claude Code", if (it.connected) "your own Claude Code, connected now" else "your own Claude Code - not connected: start it with the Orknux channel", true, emptyList(), emptyList()) }
+        val offered = agents + listOfNotNull(mine)
+        val now = if (conversation.claudeCode) offered.lastIndex
+        else agents.indexOfFirst { it.id == (conversation.agent?.id ?: conversation.chat?.agentId) }.coerceAtLeast(0)
         val chosen = if (argument == null) {
-            chooseFrom("Agent", agents, now) { a -> theme.text(a.name) + (a.description?.let { theme.muted(" - " + TurnRenderer.oneLine(it)) } ?: "") } ?: return
+            chooseFrom("Agent", offered, now) { a -> theme.text(a.name) + (a.description?.let { theme.muted(" - " + TurnRenderer.oneLine(it)) } ?: "") } ?: return
         } else {
-            SlashCommands.pick(agents, argument) { it.name } ?: throw OrknuxException("No agent \"$argument\" here.")
+            SlashCommands.pick(offered, argument) { it.name } ?: throw OrknuxException("No agent \"$argument\" here.")
+        }
+        if (chosen.id == CLAUDE_CODE) {
+            conversation.chooseClaudeCode()
+            say(theme.muted("Agent ") + theme.text("My Claude Code") + theme.muted(if (claude?.connected == true) " - your own Claude Code answers here." else " - it answers once your Claude Code is started with the Orknux channel."))
+            return
         }
         conversation.choose(chosen)
         skills = null
@@ -2023,18 +2121,17 @@ class Interactive(
     /** A subagent's session as a transcript: what it was asked, its tool calls folded, its thinking folded, its answers. */
     private fun printSession(sessionId: String) {
         val markdown = Markdown(theme, { width() }, links)
-        api.sessionLines(sessionId).forEach { line ->
-            when (line.kind) {
-                "USER" -> userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3)).forEach(::say)
-                "AGENT" -> markdown.render(line.content).removeSuffix("\n").split('\n').forEach(::say)
-                "TOOL" -> {
-                    say(theme.success("●") + " " + theme.bold(line.actor?.takeIf { it.isNotBlank() } ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20)))
-                    line.result?.let { say("  " + theme.muted("⎿ " + TurnRenderer.resultSummary(it, width() - 6))) }
-                }
-                "THINKING" -> TurnRenderer.fold(ThinkingBlock(line.content, -1), "collapsed", theme, width()).forEach(::say)
-                else -> {}
-            }
-        }
+        api.sessionLines(sessionId).forEach { line -> sessionLine(line, markdown).forEach { say(it) } }
+    }
+
+    /** One event of a session as the screen shows it. */
+    private fun sessionLine(line: SessionLine, markdown: Markdown): List<String> = when (line.kind) {
+        "USER" -> userLines(TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() * 3))
+        "AGENT" -> markdown.render(line.content).removeSuffix("\n").split('\n')
+        "TOOL" -> listOf(theme.success("●") + " " + theme.bold(line.actor?.takeIf { it.isNotBlank() } ?: "tool") + theme.muted(" " + TurnRenderer.clip(TurnRenderer.oneLine(line.content), width() - 20))) +
+            listOfNotNull(line.result?.let { "  " + theme.muted("⎿ " + TurnRenderer.resultSummary(it, width() - 6)) })
+        "THINKING" -> TurnRenderer.fold(ThinkingBlock(line.content, -1), "collapsed", theme, width())
+        else -> emptyList()
     }
 
     // ---- goals -------------------------------------------------------------------------------
@@ -2082,7 +2179,7 @@ class Interactive(
      */
     private fun follow(chatId: String) {
         val output = object : TurnOutput {
-            override fun line(text: String) = say(text)
+            override fun line(text: String) = say(text, owner = Transcript.MAIN)
             override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
             override fun phase(key: String, text: String) {
                 val g = goal
@@ -2326,6 +2423,8 @@ class Interactive(
         const val SESSIONS_KEY = 20
         const val SESSION_COUNT_MILLIS = 5_000L
         const val LIVE_MILLIS = 4_000L
+        const val FOLLOW_MILLIS = 1_500L
+        const val FOLLOW_LINES = 1_000
 
         /** The chat's own session, as /sessions names it: the one the others were asked from. */
         const val MAIN = "main"

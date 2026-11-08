@@ -6,6 +6,8 @@ data class Workspace(val id: String, val name: String, val commandMarker: String
 
 data class Agent(val id: String, val name: String, val description: String?, val enabled: Boolean, val skillCatalogs: List<String>, val hiddenSkills: List<String>)
 
+data class ClaudeCodeStatus(val available: Boolean, val reason: String?, val connected: Boolean)
+
 data class Chat(
     val id: String,
     val workspaceId: String,
@@ -132,6 +134,22 @@ class Api(val client: OrknuxClient) {
     fun messages(id: String): List<Message> =
         client.graphql("query ChatMessages(\$id: ID!) { chatMessages(id: \$id) { role content thinking thinkingMillis at } }", vars("id" to id))
             .list("chatMessages").map { Message(it.str("role") ?: "", it.str("content") ?: "", it.str("thinking"), it.long("thinkingMillis"), it.str("at")) }
+
+    /** Whether My Claude Code is offered here, why not where it is not, and whether the caller's Claude Code is connected. */
+    fun claudeCode(): ClaudeCodeStatus? = runCatching {
+        client.graphql("query { claudeCodeChat { available reason connected } }").get("claudeCodeChat")?.let {
+            ClaudeCodeStatus(it.bool("available") ?: false, it.str("reason"), it.bool("connected") ?: false)
+        }
+    }.getOrNull()
+
+    /** Hands the chat to the caller's own Claude Code, through the Orknux channel plugin. */
+    fun chooseClaudeCode(chatId: String): Chat =
+        chatOf(
+            client.graphql(
+                "mutation ChooseChatClaudeCode(\$id: ID!) { chooseChatClaudeCode(id: \$id) { $CHAT_FIELDS } }",
+                vars("id" to chatId),
+            ).get("chooseChatClaudeCode"),
+        )
 
     fun chooseAgent(chatId: String, agentId: String): Chat =
         chatOf(

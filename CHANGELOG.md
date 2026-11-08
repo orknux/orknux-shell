@@ -4,6 +4,26 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.26
+
+### Added
+
+- My Claude Code in /agent, where the server offers it, said whether your
+  Claude Code is connected: the conversation is answered by your own Claude
+  Code, through the Orknux channel, as in the browser.
+
+### Changed
+
+- A subagent chosen in /sessions or with Ctrl+T is followed on its own screen:
+  its lines so far, then what it does as it does it; the live block says
+  what it is at, and the status bar what it has spent. This chat's own turn
+  goes on unseen meanwhile, and Ctrl+T, Enter - or sending a message - goes
+  back to it, everything that came meanwhile in place.
+
+### Fixed
+
+- Choosing from Ctrl+T's list no longer leaves a "› ~" behind.
+
 ## 1.0.25
 
 ### Fixed
