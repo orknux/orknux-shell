@@ -145,6 +145,8 @@ class Interactive(
         }
         policy.problems.forEach { say(theme.warning("Rule skipped: $it")) }
         theme.unknown.forEach { say(theme.warning("Theme entry ignored: $it")) }
+        // How many lines the welcome is: a redraw keeps them at the top, as the start put them.
+        welcomeLines = transcript.lines(unfolded).size
         if (drawable) toFoot()
 
         device = DeviceLoop(api.client, handler, deviceReport())
@@ -1365,6 +1367,9 @@ class Interactive(
 
     @Volatile private var lastBlank = true
 
+    /** How many of the transcript's first lines are the welcome, which a redraw keeps at the top. */
+    private var welcomeLines = 0
+
     /** Every line said, for writing the screen again: on Ctrl+O, and when the window changes size. */
     private val transcript = Transcript()
 
@@ -1414,7 +1419,18 @@ class Interactive(
             // rows as it has, which after the text put the prompt that many rows into it.
             footer()
             w.print("\u001b[H")
-            lines.forEach { w.print(it + "\r\n") }
+            // The welcome at the top and the conversation at the foot, the gap between, where it all fits - as the
+            // start lays it out. Written from the top and pulled down whole, the welcome came down with it.
+            val room = rows - barRows()
+            val below = if (region.active) region.lines().size.coerceAtLeast(1) else 1
+            val wide = width()
+            fun rowsOf(l: List<String>) = l.sumOf { ((visibleLength(it) - 1) / wide + 1).coerceAtLeast(1) }
+            val head = if (viewing == Transcript.MAIN) lines.take(welcomeLines) else emptyList()
+            val rest = lines.drop(head.size)
+            val gap = room - rowsOf(lines) - below
+            head.forEach { w.print(it + "\r\n") }
+            if (gap > 0) w.print("\r\n".repeat(gap))
+            rest.forEach { w.print(it + "\r\n") }
             region.forget()
             region.dropHeld()
             // So the live block puts its blank line under the last one written, as it does after any other line.
@@ -1422,14 +1438,6 @@ class Interactive(
             w.flush()
         }
         synchronized(out) { if (region.active) region.exclusive(draw) else draw() }
-        // Where the text ends is worked out rather than asked of the terminal, whose answer the line editor, reading
-        // the keys meanwhile, would take as typing.
-        val room = rows - barRows()
-        val below = if (region.active) region.lines().size.coerceAtLeast(1) else 1
-        // A line wider than the window takes as many rows as it wraps to - the banner's at a narrow width.
-        val w = width()
-        val used = lines.sumOf { ((visibleLength(it) - 1) / w + 1).coerceAtLeast(1) }
-        if (used + below < room) pullDown(room - used - below)
         if (region.active) region.redraw() else if (::reader.isInitialized && phase == Phase.READING) runCatching { (reader as? ShellLineReader)?.redrawPrompt() }
         terminal.writer().print(LiveRegion.SYNC_END)
         terminal.writer().flush()

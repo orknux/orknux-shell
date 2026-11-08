@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.30
+
+### Fixed
+
+- Ctrl+O and a resize keep the welcome at the top of the window, the
+  conversation at the foot over the status bar and the gap between, as the
+  start lays them out; the screen written again used to pull the welcome down
+  with the rest.
+
 ## 1.0.29
 
 ### Fixed
