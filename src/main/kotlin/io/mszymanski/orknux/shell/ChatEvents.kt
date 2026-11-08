@@ -74,6 +74,9 @@ sealed interface ChatEvent {
     data class Drew(val markdown: String) : ChatEvent
     data class Filed(val filename: String, val contentType: String?) : ChatEvent
     data class Said(val text: String) : ChatEvent
+
+    /** A message sent into the turn was read by the agent at its next step: the server's `personRead`. */
+    data class PersonRead(val text: String) : ChatEvent
     data class Other(val name: String, val data: String) : ChatEvent
 
     companion object {
@@ -102,6 +105,7 @@ sealed interface ChatEvent {
                 "drew" -> Drew(json.str("markdown") ?: "")
                 "filed" -> Filed(json.str("filename") ?: "file", json.str("contentType"))
                 "said" -> Said(json.str("text") ?: "")
+                "personRead" -> PersonRead(json.str("text") ?: "")
                 else -> Other(frame.event, frame.data)
             }
         }

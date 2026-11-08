@@ -51,7 +51,8 @@ data class PersonQuestion(
     val allowsText: Boolean,
 )
 
-data class Subagent(val sessionId: String, val agent: String, val about: String, val active: Boolean, val depth: Int, val inputTokens: Long, val outputTokens: Long, val cost: String?)
+/** [working] is exact - the ask's turn is going now - where [active] is the server's window around its last line. */
+data class Subagent(val sessionId: String, val agent: String, val about: String, val active: Boolean, val depth: Int, val inputTokens: Long, val outputTokens: Long, val cost: String?, val working: Boolean = false)
 
 /** One line of a session's transcript. */
 data class SessionLine(val kind: String, val actor: String?, val content: String, val result: String?)
@@ -234,14 +235,14 @@ class Api(val client: OrknuxClient) {
      */
     fun subagents(llmSessionId: String): List<Subagent> {
         val family = client.graphql(
-            "query Family(\$id: ID!) { llmSessionFamily(id: \$id) { id title main depth active } }",
+            "query Family(\$id: ID!) { llmSessionFamily(id: \$id) { id title main depth active working } }",
             vars("id" to llmSessionId),
         ).list("llmSessionFamily").filter { it.bool("main") != true && it.str("id") != llmSessionId }
         return family.map { member ->
             val id = member.str("id")!!
             val one = runCatching {
                 client.graphql(
-                    "query Session(\$id: ID!) { llmSession(id: \$id) { id title active agentDetails { agent } spent { inputTokens outputTokens cost } } }",
+                    "query Session(\$id: ID!) { llmSession(id: \$id) { id title active working agentDetails { agent } spent { inputTokens outputTokens cost } } }",
                     vars("id" to id),
                 ).get("llmSession")
             }.getOrNull()
@@ -250,6 +251,7 @@ class Api(val client: OrknuxClient) {
                 agent = one?.get("agentDetails").str("agent") ?: "agent",
                 about = member.str("title") ?: one.str("title") ?: "",
                 active = member.bool("active") ?: one.bool("active") ?: false,
+                working = member.bool("working") ?: false,
                 depth = (member.long("depth") ?: 1).toInt(),
                 inputTokens = one?.get("spent").double("inputTokens")?.toLong() ?: 0,
                 outputTokens = one?.get("spent").double("outputTokens")?.toLong() ?: 0,
@@ -300,6 +302,7 @@ class Api(val client: OrknuxClient) {
             agent = one.get("agentDetails").str("agent") ?: "agent",
             about = one.str("title") ?: "",
             active = one.bool("active") ?: false,
+            working = one.bool("working") ?: false,
             depth = 0,
             inputTokens = one.get("spent").double("inputTokens")?.toLong() ?: 0,
             outputTokens = one.get("spent").double("outputTokens")?.toLong() ?: 0,

@@ -539,8 +539,21 @@ class Interactive(
             val text = line.replace("\\\n", "\n").trim()
             // A message goes to this chat's main session, so it is shown there: back to it first, where another is followed.
             if (text.isNotEmpty() && viewing != Transcript.MAIN && SlashCommands.parse(text) == null) {
-                showMain()
-                userLines(text).forEach { say(it) }
+                // On a subagent's screen: into its turn where one is going, and nowhere otherwise - never to another agent.
+                val followed = viewed
+                val left = followed != null && runCatching { api.postDuringSession(followed.sessionId, text) }.getOrDefault(false)
+                if (left) {
+                    userLines(text).forEach { say(it) }
+                    say(theme.muted("  sent now - ${followed!!.agent} reads it at its next step"))
+                    say("")
+                } else {
+                    if (region.ansi) {
+                        terminal.writer().print("\u001b[1A\u001b[2K")
+                        pullDown(1)
+                    }
+                    say(theme.warning("Not sent: ") + theme.muted("${followed?.agent ?: "this agent"} has finished, so nothing there would read it. ${keyName("sessions")}, Enter goes back to this chat to write to ${conversation.agent?.name ?: "the main agent"}."))
+                }
+                continue
             } else if (text.isNotEmpty()) showSent(line, text)
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
@@ -707,13 +720,13 @@ class Interactive(
         raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
         terminal.attributes = raw
         region.thinkingHint = detailsHint()
-        region.phase("thinking", theme.thinking("Thinking"))
+        region.phase("model", "Waiting for the model")
         region.start { below() }
         // Ten frames a second, and only while a turn runs: nothing ticks when nothing is happening.
         val ticker = Thread.ofPlatform().daemon().name("orknux-shell-ticker").start {
             var n = 0
             while (phase == Phase.TURN) {
-                region.tick()
+                tickTurn()
                 if (++n % 10 == 0) footer()
                 try { Thread.sleep(100) } catch (_: InterruptedException) { break }
             }
@@ -881,7 +894,7 @@ class Interactive(
         val ticker = Thread.ofPlatform().daemon().start {
             var n = 0
             while (phase == Phase.TURN) {
-                region.tick()
+                tickTurn()
                 if (++n % 10 == 0) footer()
                 try { Thread.sleep(100) } catch (_: InterruptedException) { break }
             }
@@ -970,8 +983,10 @@ class Interactive(
     /** Under the spinner: what is queued, the line being typed, and the status line. */
     private fun below(): List<String> {
         val typing = buildList {
+            val following = viewing != Transcript.MAIN
             queued.forEachIndexed { i, text ->
-                add(theme.muted("  queued · ") + theme.text(text) + (if (i == queued.lastIndex && ahead.isEmpty()) theme.muted(" · ${keyName("send-now")} sends now") else ""))
+                val label = if (following) "  queued for ${conversation.agent?.name ?: "main"} (main) · " else "  queued · "
+                add(theme.muted(label) + theme.text(text) + (if (!following && i == queued.lastIndex && ahead.isEmpty()) theme.muted(" · ${keyName("send-now")} sends now") else ""))
             }
             if (queued.isNotEmpty() && region.active) add("")
             if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) typingHint() else "▏"))
@@ -989,9 +1004,11 @@ class Interactive(
     /** What the empty typing line says: where a message goes - this chat's main session, said while another is on the screen - and how to send it now. */
     private fun typingHint(): String {
         val followed = viewed?.takeIf { viewing != Transcript.MAIN }
-        val to = if (followed != null) " to ${conversation.agent?.name ?: "the main agent"} (main)" else ""
-        val now = if (followed != null) " · ${keyName("send-now")} sends it to ${followed.agent} now" else if (queued.isEmpty()) " · ${keyName("send-now")} sends it now" else ""
-        return "type to queue a message$to for when this turn ends$now"
+        if (followed != null) {
+            return if (followed.working) "type to send a message to ${followed.agent} now - Enter or ${keyName("send-now")}; it reads it at its next step"
+            else "${followed.agent} has finished; ${keyName("sessions")}, Enter goes back to this chat to write to ${conversation.agent?.name ?: "the main agent"}"
+        }
+        return "type to queue a message for when this turn ends" + (if (queued.isEmpty()) " · ${keyName("send-now")} sends it now" else "")
     }
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
@@ -1056,6 +1073,13 @@ class Interactive(
                     13, 10 -> {
                         aheadChoices.getOrNull(aheadAt)?.let { chosen -> ahead.setLength(0); ahead.append(chosen.value.trimEnd()) }
                         val typed = ahead.toString().trim()
+                        // On a subagent's screen what is written goes to that subagent, now: there is no "after its turn"
+                        // for the Shell to queue it for, and a message meant for the agent on the screen reaching another
+                        // is the worst thing a queue can do.
+                        if (typed.isNotEmpty() && viewing != Transcript.MAIN && SlashCommands.parse(typed) == null) {
+                            sendNow()
+                            continue
+                        }
                         val now = SlashCommands.parse(typed)?.takeIf { it.name in WHILE_WORKING }
                         if (now != null) {
                             ahead.setLength(0)
@@ -1119,6 +1143,8 @@ class Interactive(
         // Watching a subagent work, what is typed goes into its turn: that is the agent on the screen, and the one
         // being steered. What is queued is this chat's, and goes to this chat's main session as it always does.
         val followed = viewed
+        // On a subagent's screen with nothing typed there is nothing to send: the queue is this chat's, not its.
+        if (typed.isEmpty() && viewing != Transcript.MAIN) return
         if (typed.isNotEmpty() && viewing != Transcript.MAIN && followed != null) {
             val left = try {
                 api.postDuringSession(followed.sessionId, typed)
@@ -1127,7 +1153,7 @@ class Interactive(
                 return
             }
             if (!left) {
-                say(theme.warning("Not sent: ") + theme.muted("${followed.agent} is not working on anything now, so nothing there would read it."))
+                say(theme.warning("Not sent: ") + theme.muted("${followed.agent} has finished, so nothing there would read it. ${keyName("sessions")}, Enter goes back to this chat."))
                 return
             }
             ahead.setLength(0)
@@ -1153,6 +1179,7 @@ class Interactive(
         if (typed.isNotEmpty()) ahead.setLength(0) else queued.clear()
         aheadTyped()
         sending.forEach { text ->
+            into.sentNow()
             userLines(text).forEach { say(it, owner = Transcript.MAIN) }
             say(theme.muted("  sent now - the agent reads it at its next step"), owner = Transcript.MAIN)
         }
@@ -1190,8 +1217,18 @@ class Interactive(
     private var aheadDismissed: String? = null
 
     /** Ctrl+O and `/thinking`: the last turn's thinking in full, every stretch in order, and what is streaming now. */
-    /** What the details key does now, said on the spinner's line. */
-    private fun detailsHint(): String = keyName("details") + if (unfolded) " fold" else " expand"
+    /** What the details key does now, said on the spinner's line - and how many messages sent into the turn wait to be read. */
+    private fun detailsHint(): String {
+        val waiting = (active ?: conversationOrNull())?.waitingToBeRead ?: 0
+        return keyName("details") + (if (unfolded) " fold" else " expand") +
+            (if (waiting > 0) " · $waiting waiting to be read at its next step" else "")
+    }
+
+    /** One frame of the live block: the hint is read again each time, since what it says changes under the turn. */
+    private fun tickTurn() {
+        region.thinkingHint = detailsHint()
+        region.tick()
+    }
 
     /** The byte [action]'s shortcut arrives as: the one set with /config, or its default. */
     private fun keyOf(action: String): Int = Keys.code(Keys.specFor(action, config.keys))!!
@@ -1578,7 +1615,7 @@ class Interactive(
         // A session followed: its agent and what it has spent, rather than this chat's, which is not on the screen.
         viewed?.let { v ->
             return listOf(
-                theme.text(v.agent) + theme.muted(" (followed)"),
+                theme.text(v.agent) + theme.muted(if (v.working) " (followed)" else " (followed · finished)"),
                 theme.muted("↑${TurnRenderer.tokens(v.inputTokens)} ↓${TurnRenderer.tokens(v.outputTokens)}") + (v.cost?.let { theme.muted(" · $it") } ?: ""),
                 theme.muted("${keyName("sessions")}, Enter: back to main"),
             ).joinToString(theme.muted(" · ")) to theme.muted("workspace ") + theme.text(conversation.workspace.name)
@@ -1766,11 +1803,11 @@ class Interactive(
         viewing = s.sessionId
         viewed = s
         region.focused = true
-        region.focusPhase("thinking", theme.thinking("Thinking"))
+        region.focusPhase(if (s.working) "model" else null, if (s.working) "Waiting for the model" else null)
         repaint()
         if (followed[s.sessionId] == null) {
             say(theme.bold(theme.accent(s.agent)) + theme.muted(" · " + found.kind + (s.about.takeIf { it.isNotBlank() }?.let { " · " + TurnRenderer.oneLine(it) } ?: "")))
-            say(theme.muted("Enter queues what you write for this chat's main session; ${keyName("send-now")} sends it to ${s.agent} now. ${keyName("sessions")} or /sessions goes back."))
+            say(theme.muted("What you write here goes to ${s.agent}, into its turn, where it reads it at its next step - Enter or ${keyName("send-now")}. ${keyName("sessions")}, Enter goes back to this chat."))
             say("")
             followed[s.sessionId] = 0
         }
@@ -1816,7 +1853,8 @@ class Interactive(
      */
     private fun followedPhase(sessionId: String, last: SessionLine?, lines: Int) {
         val writing = api.sessionWriting(sessionId)
-        val finished = viewed?.active == false || (writing == null && last?.kind == "AGENT")
+        // The server says exactly whether the ask's turn is going; nothing is drawn once it is not.
+        val finished = viewed?.working == false
         val w = width()
         when {
             finished -> region.focusPhase(null, null)
@@ -1834,7 +1872,9 @@ class Interactive(
                 val tool = last.actor?.takeIf { it.isNotBlank() } ?: "tool"
                 region.focusPhase("call:$lines", "Running " + theme.accent(tool) + ": " + theme.muted(TurnRenderer.argumentSummary(last.content, w - tool.length - 24)))
             }
-            else -> region.focusPhase("thinking", theme.thinking("Thinking"))
+            last?.kind == "THINKING" -> region.focusPhase("thinking:$lines", theme.thinking("Thinking"))
+            // A tool answered and nothing written since: the model has not begun on it, or the server has not said.
+            else -> region.focusPhase("model", "Waiting for the model")
         }
     }
 
@@ -2347,7 +2387,7 @@ class Interactive(
             val ticker = Thread.ofPlatform().daemon().start {
                 var n = 0
                 while (phase == Phase.TURN) {
-                    region.tick()
+                    tickTurn()
                     if (++n % 10 == 0) footer()
                     try { Thread.sleep(100) } catch (_: InterruptedException) { break }
                 }

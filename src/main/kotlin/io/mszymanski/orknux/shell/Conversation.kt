@@ -51,9 +51,18 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
 
     val writingSoFar: Long get() = streamedChars / CHARS_PER_TOKEN
 
-    /** Every event of a turn, sent from here or followed, passes this way to keep [writingSoFar]. */
+    /** How many messages sent into the running turn the agent has not read yet - it reads them at its next step. */
+    @Volatile
+    var waitingToBeRead = 0
+        private set
+
+    /** One more message left in the turn's inbox. */
+    fun sentNow() { waitingToBeRead++ }
+
+    /** Every event of a turn, sent from here or followed, passes this way to keep [writingSoFar] and [waitingToBeRead]. */
     fun heard(event: ChatEvent) {
         when (event) {
+            is ChatEvent.PersonRead -> if (waitingToBeRead > 0) waitingToBeRead--
             is ChatEvent.Chunk -> streamedChars += event.text.length
             is ChatEvent.Thinking -> streamedChars += event.text.length
             // A tool call's count is its arguments so far, across the round: only what is new since the last is added.
@@ -65,6 +74,7 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
             is ChatEvent.Done -> {
                 streamedChars = 0
                 writingChars = 0
+                waitingToBeRead = 0
             }
             else -> {}
         }
@@ -406,7 +416,9 @@ class TurnRenderer(
                     listOf(calledLine(theme, call?.tool ?: "tool", call?.arguments ?: "", event.result, event.failed, took, out.width())),
                     detailLines(listOf(tool), theme, out.width()).dropLastWhile { it.isEmpty() },
                 )
-                out.phase("thinking", theme.thinking("Thinking"))
+                // Nothing is known of the model until it says something: a call queued behind another agent's at the
+                // model server stood as "Thinking" for a minute while the model had not begun on it.
+                out.phase("model", "Waiting for the model")
             }
             is ChatEvent.Chunk -> {
                 answer.append(event.text)
@@ -428,6 +440,8 @@ class TurnRenderer(
             is ChatEvent.Filed -> work(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
             // What the model says while it works: its own lines, trimmed - it arrives with newlines after it, which
             // written raw were rows the screen had not counted.
+            // Read: said in the transcript, so a message sent mid-turn is seen to land, and the count waiting goes down.
+            is ChatEvent.PersonRead -> work(theme.success("✓ ") + theme.muted("read: " + oneLine(event.text)))
             is ChatEvent.Said -> event.text.trim().takeIf { it.isNotEmpty() }?.let { said -> write(Kind.WORK, said.lines().map { theme.muted(markdown.inline(it)) }) }
             else -> {}
         }

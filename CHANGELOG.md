@@ -4,6 +4,29 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.33
+
+### Changed
+
+- On a subagent's screen what you write goes to that subagent and nowhere
+  else: Enter and Ctrl+S both send it into its turn now, where it reads it
+  at its next step; nothing is queued there, and with nothing typed Ctrl+S
+  sends nothing. Where it has finished, the Shell says so and sends nothing.
+  Messages queued for this chat are shown as its while you are there.
+- "Waiting for the model" where that is all the Shell knows - after a tool
+  answers, before the model has said anything - rather than "Thinking": a
+  call queued behind another agent's at the model server stood as thinking
+  for a minute while the model had not begun on it. "Thinking" is said once
+  the model thinks.
+- A message sent into the turn is counted beside the spinner - "1 waiting to
+  be read at its next step" - until the agent reads it, which is written as
+  "✓ read: …". The agent reads its inbox only when a model call returns, so
+  a call queued behind a subagent's big prompt is why a message waits.
+- A followed session says exactly whether its agent is working, from the
+  server, rather than guessing from its transcript: nothing is drawn once it
+  has finished, and the status bar says "finished". Needs a server with
+  `working` on sessions.
+
 ## 1.0.32
 
 ### Changed
