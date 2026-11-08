@@ -11,6 +11,7 @@ refuses a tag with no section here.
 - "Reading the conversation" says how much of the prompt has been read: the
   server's count already holds the cached part, and 1.0.6 still added it
   while the reading was under way.
+- A blank line between a question an agent asks and the answers to choose from.
 
 ## 1.0.6
 

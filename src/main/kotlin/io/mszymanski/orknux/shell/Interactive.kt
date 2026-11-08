@@ -637,6 +637,8 @@ class Interactive(
     private fun ask(question: PersonQuestion): Boolean {
         say(theme.bold(question.question) + (question.askedBy?.let { theme.muted("  · $it asks") } ?: ""))
         question.items.forEach { say(theme.muted("  • ") + it) }
+        // Room between the question and the choices under it.
+        say("")
         val own = question.allowsText
         val rows = question.options.map { option -> option.label + (option.description?.let { theme.muted(" - $it") } ?: "") } +
             listOfNotNull(if (own) theme.muted("Answer in my own words") else null)
