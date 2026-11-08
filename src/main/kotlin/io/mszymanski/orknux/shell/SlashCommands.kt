@@ -25,13 +25,16 @@ object SlashCommands {
         SlashCommand("mode", "[auto|ask|plan]", "Cycle or set the mode (also Shift+Tab)"),
         SlashCommand("theme", "[<name> #rrggbb|reset]", "Choose a colour and change it, or set one directly"),
         SlashCommand("rules", null, "Show the rules for local commands"),
+        SlashCommand("orkx-web-chat", null, "Open this chat in Orknux in the browser"),
+        SlashCommand("orkx-web-session", null, "Open this conversation's session log in the browser"),
+        SlashCommand("orkx-web-agent-settings", null, "Open the agent's settings in the browser"),
         SlashCommand("update", null, "Install the newest Orknux Shell, checked against Orknux's release key"),
         SlashCommand("help", null, "What there is to type"),
         SlashCommand("quit", null, "Leave (also Ctrl+D)"),
     )
 
     /** Other spellings people type for a command; not offered in completion. */
-    val ALIASES: Map<String, String> = mapOf("exit" to "quit", "agents" to "agent", "workspaces" to "workspace", "skills" to "skill", "chats" to "resume")
+    val ALIASES: Map<String, String> = mapOf("exit" to "quit", "agents" to "agent", "workspaces" to "workspace", "skills" to "skill", "chats" to "resume", "orkxweb-chat" to "orkx-web-chat", "orkxweb-session" to "orkx-web-session", "orkxweb-agent-settings" to "orkx-web-agent-settings")
 
     val NAMES: List<String> = ALL.map { it.name } + ALIASES.keys
 

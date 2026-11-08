@@ -1244,7 +1244,28 @@ class Interactive(
             "goal" -> goal(argument)
             "update" -> update()
             "answer" -> answerQuestions(conversation, askedFor = true)
+            "orkx-web-chat" -> openInBrowser(
+                "this chat",
+                "/chat/" + (conversation.chat?.id ?: throw OrknuxException("There is no chat yet: it starts with your first message.")),
+            )
+            "orkx-web-session" -> openInBrowser(
+                "this conversation's session log",
+                "/workspace/${conversation.workspace.id}/sessions/" +
+                    (conversation.llmSessionId ?: throw OrknuxException("There is no session yet: it starts with your first message.")),
+            )
+            "orkx-web-agent-settings" -> openInBrowser(
+                "${conversation.agent?.name ?: "the agent"}'s settings",
+                "/workspace/${conversation.workspace.id}/agents/" +
+                    (conversation.agent?.id ?: throw OrknuxException("No agent is chosen in this chat yet: /agent picks one.")) + "/settings",
+            )
         }
+    }
+
+    /** Opens a page of the server in the browser, and says its address too - clickable where the terminal draws links. */
+    private fun openInBrowser(what: String, path: String) {
+        val url = links.absolute(path)
+        val opened = runCatching { Links.open(url) }.isSuccess
+        say(theme.muted(if (opened) "Opened $what in the browser: " else "Open $what in the browser: ") + links.link(url, url) { theme.accent(it) })
     }
 
     // ---- updates -----------------------------------------------------------------------------

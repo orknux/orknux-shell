@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.10
+
+### Added
+
+- `/orkx-web-chat`, `/orkx-web-session` and `/orkx-web-agent-settings` open
+  this chat, its session log and the agent's settings in Orknux in the
+  browser, and print the address too.
+
 ## 1.0.9
 
 ### Fixed
