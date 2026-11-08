@@ -1591,7 +1591,10 @@ class Interactive(
                 "this chat",
                 "/chat/" + (conversation.chat?.id ?: throw OrknuxException("There is no chat yet: it starts with your first message.")),
             )
-            "orkx-web-session" -> openInBrowser(
+            // The session on the screen: a subagent's while it is followed, this chat's own otherwise.
+            "orkx-web-session" -> viewed?.let { v ->
+                openInBrowser("${v.agent}'s session log", "/workspace/${conversation.workspace.id}/sessions/${v.sessionId}")
+            } ?: openInBrowser(
                 "this conversation's session log",
                 "/workspace/${conversation.workspace.id}/sessions/" +
                     (conversation.llmSessionId ?: throw OrknuxException("There is no session yet: it starts with your first message.")),
