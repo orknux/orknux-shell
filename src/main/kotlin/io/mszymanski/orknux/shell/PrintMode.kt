@@ -27,7 +27,7 @@ class PrintMode(
             throw OrknuxException("Several workspaces; name one with --workspace: ${all.joinToString(", ") { it.name }}")
         } ?: return 1
         val agents = api.agents(workspace.id).filter { it.enabled }
-        val agent = Connection.agent(agents, config, agentName)
+        val agent = Connection.agent(agents, config, agentName) { api.chats(workspace.id) }
         val conversation = Conversation(api, workspace, agent, mode ?: config.mode)
         val policy = CommandPolicy(config.commands)
         policy.problems.forEach { err.println(theme.warning("Rule skipped: $it")) }
@@ -80,7 +80,7 @@ class PrintMode(
         val u = conversation.usage
         err.println(
             theme.muted(
-                "${workspace.name} · ${conversation.agent?.name ?: conversation.chat?.agentName ?: "agent"} · ${conversation.mode} · " +
+                listOfNotNull(workspace.name, conversation.agent?.name ?: conversation.chat?.agentName, conversation.mode).joinToString(" · ") + " · " +
                     "↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)} (${TurnRenderer.tokens(u.cachedInputTokens)} cached)" + (u.cost?.let { " · " + TurnRenderer.cost(it) } ?: ""),
             ),
         )

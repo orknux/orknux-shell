@@ -4,6 +4,16 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Fixed
+
+- The Shell names the agent it will talk to from the first screen - the one
+  last used here, or else the one your newest chat was with - where it used to
+  say "agent" until the first answer came, which read as an agent called that.
+- Closing the workspace list at the start no longer leaves blank rows above
+  the banner for the rest of the conversation.
+
 ## 1.0.36
 
 ### Fixed

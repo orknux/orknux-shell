@@ -19,7 +19,7 @@ class Picker(
     /** A key that closes the list as Esc does: the one that opened it, so pressing it again takes it away. */
     private val closeKey: Int? = null,
 ) {
-    /** How many rows the list took when it was last drawn: what it pushed the screen up by, less one. */
+    /** How many rows the list took when it was last drawn; see [scrolledBy] for what that pushed the screen up by. */
     var lastHeight = 0
         private set
 
@@ -150,5 +150,15 @@ class Picker(
 
     companion object {
         const val TIMEOUT = -2
+
+        /**
+         * How many rows the screen scrolled up to make room for a list [height]
+         * rows tall drawn from [startRow], where the scrolling area ends at
+         * [bottom] (1-based, as the terminal counts). At the foot that is all but
+         * its first row; near the top of a clean screen - the workspace list at
+         * the start - it is none, and pulling the text down by the list's height
+         * there pushed the banner off the top row with blank rows above it.
+         */
+        fun scrolledBy(startRow: Int, height: Int, bottom: Int): Int = (startRow + height - 1 - bottom).coerceAtLeast(0)
     }
 }

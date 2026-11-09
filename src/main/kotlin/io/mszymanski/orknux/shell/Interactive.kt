@@ -197,7 +197,7 @@ class Interactive(
         val workspace = Connection.workspace(api, config, named.first) { all -> chooseFrom("Workspaces", all) { it.name } }
             ?: throw OrknuxException("No workspace chosen.")
         agents = api.agents(workspace.id).filter { it.enabled }
-        val agent = Connection.agent(agents, config, named.second)
+        val agent = Connection.agent(agents, config, named.second) { api.chats(workspace.id) }
         conversation = Conversation(api, workspace, agent, config.mode)
         remember()
         say(
@@ -855,13 +855,14 @@ class Interactive(
             rows = { terminal.height.takeIf { it > 0 } ?: 24 },
             width = ::width,
         )
+        val start = listStart()
         val saved = terminal.enterRawMode()
         val chosen = try {
             synchronized(out) { picker.chooseMany(what, rows) }
         } finally {
             terminal.attributes = saved
         }
-        pullDown(picker.lastHeight - 1)
+        giveBack(picker, start)
         return chosen
     }
 
@@ -945,8 +946,18 @@ class Interactive(
     private fun alignToFoot() {
         if (!region.ansi || status == null) return
         val rows = terminal.height.takeIf { it > 0 } ?: return
+        val row = cursorRow() ?: return
+        val gap = (rows - barRows()) - row
+        if (gap > 0) pullDown(gap)
+    }
+
+    /**
+     * The row the cursor is on, as the terminal answers it (1-based), or null
+     * where it does not answer within a moment.
+     */
+    private fun cursorRow(): Int? {
         val saved = terminal.enterRawMode()
-        val row = try {
+        return try {
             terminal.writer().print("\u001b[6n")
             terminal.writer().flush()
             val input = terminal.reader()
@@ -963,10 +974,27 @@ class Interactive(
             null
         } finally {
             terminal.attributes = saved
-        } ?: return
-        val gap = (rows - barRows()) - row
-        if (gap > 0) pullDown(gap)
+        }
     }
+
+    /**
+     * What a closed list pushed up comes back - only that. The list is drawn
+     * at the cursor: at the foot it scrolled the screen up by all but its first
+     * row, but the workspace list at the start is drawn just under the banner
+     * on a clean screen and scrolled nothing, so giving back its height there
+     * scrolled the banner down and left blank rows above it for the rest of
+     * the conversation. [startRow] is where the list began; unknown, it is
+     * taken to have been at the foot, which is where every other list opens.
+     */
+    private fun giveBack(picker: Picker, startRow: Int?) {
+        val rows = terminal.height.takeIf { it > 0 }
+        val pushed = if (startRow == null || rows == null) picker.lastHeight - 1
+        else Picker.scrolledBy(startRow, picker.lastHeight, rows - barRows())
+        pullDown(pushed)
+    }
+
+    /** Where a list is about to be drawn: asked of the terminal only where the screen is drawn on. */
+    private fun listStart(): Int? = if (region.ansi) cursorRow() else null
 
     /**
      * Moves the scrolling area's text down [rows] rows and the cursor with it:
@@ -1681,7 +1709,8 @@ class Interactive(
         val settled = System.currentTimeMillis() - startedAt > DEVICE_GRACE_MILLIS
         val device = if (::device.isInitialized && !device.connected && settled) theme.warning("commands cannot run here: reconnecting") else null
         val left = listOfNotNull(
-            theme.text(c.agent?.name ?: c.chat?.agentName ?: "agent"),
+            // No fallback word: "agent" read as an agent called that. Before the server has chosen, nothing is said.
+            (c.agent?.name ?: c.chat?.agentName)?.let(theme::text),
             modeLabel(),
             c.effort?.let { theme.muted("effort ") + theme.text(it) },
             goal?.takeIf { it.running }?.let { theme.accent("goal ${it.progress}") },
@@ -2128,7 +2157,7 @@ class Interactive(
         if (chosen.id == conversation.workspace.id) return
         conversation.workspace = chosen
         agents = api.agents(chosen.id).filter { it.enabled }
-        conversation.agent = agents.firstOrNull { it.id == config.agentId }
+        conversation.agent = Connection.agent(agents, config, null) { api.chats(chosen.id) }
         conversation.clear()
         sideChats.clear()
         attachments.clear()
@@ -2324,7 +2353,7 @@ class Interactive(
             val chat = side.chat ?: return@forEach
             val u = side.usage
             listed += Listed(
-                "@", side.agent?.name ?: "agent", chat.title, if (active === side) "running" else "answered",
+                "@", side.agent?.name ?: chat.agentName ?: "", chat.title, if (active === side) "running" else "answered",
                 "↑${TurnRenderer.tokens(u.inputTokens)} ↓${TurnRenderer.tokens(u.outputTokens)}",
             ) { printHistory(api.messages(chat.id)) }
         }
@@ -2548,14 +2577,15 @@ class Interactive(
             width = ::width,
             closeKey = closeKey,
         )
+        val start = listStart()
         val saved = terminal.enterRawMode()
         val chosen = try {
             synchronized(out) { picker.choose(what, items.map(label), current) }
         } finally {
             terminal.attributes = saved
         }
-        // The list pushed the screen up while it was open; the rows come back, the prompt above the bar.
-        pullDown(picker.lastHeight - 1)
+        // What the list pushed the screen up by while it was open comes back, the prompt above the bar.
+        giveBack(picker, start)
         return chosen?.let { items[it] }
     }
 
