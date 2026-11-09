@@ -1,10 +1,10 @@
 # Installs Orknux Shell on Windows from its GitHub release, checked against the
 # release's SHA256SUMS before anything is put in place.
 #
-#   irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1 | iex
+#   irm https://orkx.ai/install/shell.ps1 | iex
 #
 # With options, download it first:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1))) -Version v1.0.0
+#   & ([scriptblock]::Create((irm https://orkx.ai/install/shell.ps1))) -Version v1.0.0
 #   ... -Uninstall [-Purge]
 #
 # Installs orknux.exe, with orkx.cmd as its short name, into

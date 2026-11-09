@@ -2,9 +2,9 @@
 # Installs Orknux Shell on Linux from its GitHub release, checked against the
 # release's SHA256SUMS before anything is put in place.
 #
-#   curl -fsSL https://raw.githubusercontent.com/orknux/orknux-shell/main/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- --version v1.0.0
-#   curl -fsSL .../install.sh | sh -s -- --uninstall
+#   curl -fsSL https://orkx.ai/install/shell.sh | sh
+#   curl -fsSL .../shell.sh | sh -s -- --version v1.0.0
+#   curl -fsSL .../shell.sh | sh -s -- --uninstall
 #
 # Installs into ~/.local/bin, or ORKNUX_SHELL_DIR when set, as orknux, with
 # orkx beside it as the short name. Needs no root: run
@@ -50,7 +50,7 @@ fi
 # Only what CI builds: say so rather than install something that will not start.
 case "$(uname -s)" in
   Linux) ;;
-  MINGW*|MSYS*|CYGWIN*) fail "on Windows, run in PowerShell: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+  MINGW*|MSYS*|CYGWIN*) fail "on Windows, run in PowerShell: irm https://orkx.ai/install/shell.ps1 | iex" ;;
   *) fail "there is no build for $(uname -s) yet; the jar runs anywhere with Java 25: https://github.com/$REPO/releases" ;;
 esac
 case "$(uname -m)" in

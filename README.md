@@ -10,17 +10,19 @@ to ask.
 Linux (x86-64; glibc of Ubuntu 24.04, Debian 13, Fedora 40 or newer):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/orknux/orknux-shell/main/install.sh | sh
+curl -fsSL https://orkx.ai/install/shell.sh | sh
 ```
 
 Windows (x64), in PowerShell:
 
 ```
-irm https://raw.githubusercontent.com/orknux/orknux-shell/main/install.ps1 | iex
+irm https://orkx.ai/install/shell.ps1 | iex
 ```
 
-Both take the newest release, check it against the release's `SHA256SUMS`
-before putting it in place, and need no root or administrator. The command is
+Those are this repository's `install.sh` and `install.ps1`, as the newest
+release's CI uploaded them to orknux.ai, whose short address is orkx.ai. Both
+take the newest release, check it against the release's `SHA256SUMS` before
+putting it in place, and need no root or administrator. The command is
 `orknux`, with `orkx` as its short name. Linux installs to `~/.local/bin`
 (`ORKNUX_SHELL_DIR` to choose), Windows to
 `%LOCALAPPDATA%\Programs\orknux-shell`, which it adds to your PATH. Running
@@ -28,7 +30,7 @@ either again updates, and so does `orknux update` (below). Options: `--version v
 given release, `--uninstall` / `-Uninstall` to remove it, with `--purge` /
 `-Purge` to remove the sign-in too. On Linux, pass them as
 `curl ... | sh -s -- --uninstall`; on Windows, as
-`& ([scriptblock]::Create((irm .../install.ps1))) -Uninstall`.
+`& ([scriptblock]::Create((irm https://orkx.ai/install/shell.ps1))) -Uninstall`.
 
 Anywhere else, the jar on the [releases page](https://github.com/orknux/orknux-shell/releases)
 runs with Java 25: `java -jar orknux-shell.jar`.
