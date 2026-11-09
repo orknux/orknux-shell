@@ -7,7 +7,7 @@ to ask.
 
 ## Installing
 
-Linux (x86-64; glibc of Ubuntu 24.04, Debian 13, Fedora 40 or newer):
+Linux (x86-64; glibc 2.17 or newer, which is RHEL 7, Debian 8, Ubuntu 14.04 and everything since):
 
 ```
 curl -fsSL https://orkx.ai/install/shell.sh | sh

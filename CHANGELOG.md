@@ -4,6 +4,23 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.36
+
+### Fixed
+
+- The Linux binary runs on glibc 2.17 and newer - RHEL 7, Debian 8, Ubuntu
+  14.04 and everything since - where it used to need 2.34 (Ubuntu 22.04,
+  Debian 12, RHEL 9) and refused to start on anything older. It is built in
+  GraalVM's Oracle Linux 8 image now rather than on the CI runner's Ubuntu,
+  whose glibc it inherited.
+- When the installed binary does not start, the installer prints the binary's
+  own error - the loader naming the glibc version it misses, most often -
+  together with what the binary needs and the jar as the way round, instead of
+  a guess that named too new a glibc.
+- Installing is `curl -fsSL https://orkx.ai/install/shell.sh | sh` and
+  `irm https://orkx.ai/install/shell.ps1 | iex`: the installers orknux.ai
+  serves from the newest release, at the site's short address.
+
 ## 1.0.35
 
 ### Fixed

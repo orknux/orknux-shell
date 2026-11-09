@@ -120,8 +120,14 @@ ln -sfn orknux "$DIR/orkx"
 # Installed as orknux-shell before 1.0.0 was renamed: that copy would never be updated again.
 rm -f "$DIR/orknux-shell"
 
-INSTALLED="$("$TARGET" --version 2>/dev/null || true)"
-[ -n "$INSTALLED" ] || fail "installed $TARGET, but it does not start here (it needs a recent glibc: Ubuntu 24.04, Debian 13, Fedora 40 or newer)"
+# Started once, so a binary this machine cannot run is said so now and in the
+# binary's own words - the loader's "GLIBC_2.xx not found", most often - rather
+# than guessed at, or found out at the first chat.
+if ! INSTALLED="$("$TARGET" --version 2>"$WORK/start.err")" || [ -z "$INSTALLED" ]; then
+  REASON="$(tr '\n' ' ' < "$WORK/start.err" | cut -c1-300)"
+  fail "installed $TARGET, but it does not start here${REASON:+: $REASON}
+  It needs x86-64 Linux with glibc 2.17 or newer (RHEL 7, Debian 8, Ubuntu 14.04 and everything since). Anywhere else, the jar on https://github.com/$REPO/releases runs with Java 25."
+fi
 say "Installed $INSTALLED at $TARGET."
 
 case ":$PATH:" in

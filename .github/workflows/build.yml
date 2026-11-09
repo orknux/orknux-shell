@@ -39,9 +39,19 @@ jobs:
         shell: bash
         run: ./mvnw -B package
 
+      # In GraalVM's Oracle Linux 8 image, not on the runner: a native image is
+      # linked against the glibc of the machine that builds it, and built on the
+      # runner's Ubuntu 24.04 the binary wanted glibc 2.34 and refused to start
+      # on anything older than RHEL 9 or Ubuntu 22.04. Oracle Linux 8 is the
+      # oldest system JDK 25 is supported on, and a binary built there asks for
+      # nothing past glibc 2.17: it started in CentOS 7, Debian 10, Ubuntu 20.04
+      # and Rocky 8 containers. scripts/build-native.sh uses the same image; a
+      # change here is a change there.
       - name: Native image
         if: runner.os != 'Windows'
-        run: native-image -jar target/orknux-shell.jar -o target/orknux-shell
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src ghcr.io/graalvm/native-image-community:25-ol8 \
+            -jar target/orknux-shell.jar -o target/orknux-shell
 
       # On Windows it is native-image.cmd, which Git Bash does not find by its bare name.
       - name: Native image (Windows)
