@@ -97,6 +97,50 @@ class OrknuxClient(
         )
     }
 
+    /** [bytes] as one `multipart/form-data` part under [field] - a recording, which is never on disk. */
+    fun uploadBytes(path: String, field: String, filename: String, contentType: String, bytes: ByteArray, timeout: Duration = Duration.ofMinutes(2)): Reply {
+        val boundary = "orknux-shell-" + java.util.UUID.randomUUID().toString().replace("-", "")
+        val head = "--$boundary\r\nContent-Disposition: form-data; name=\"$field\"; filename=\"$filename\"\r\nContent-Type: $contentType\r\n\r\n"
+        val body = HttpRequest.BodyPublishers.concat(
+            HttpRequest.BodyPublishers.ofString(head),
+            HttpRequest.BodyPublishers.ofByteArray(bytes),
+            HttpRequest.BodyPublishers.ofString("\r\n--$boundary--\r\n"),
+        )
+        return send(
+            builder(path, timeout)
+                .header("Origin", origin)
+                .header("Content-Type", "multipart/form-data; boundary=$boundary")
+                .POST(body)
+                .build(),
+        )
+    }
+
+    /** What came back as bytes - audio - with its content type; the body is read as text only where it is a refusal. */
+    class Bytes(val status: Int, val bytes: ByteArray, val contentType: String?) {
+        val ok: Boolean get() = status in 200..299
+        val text: String get() = String(bytes, StandardCharsets.UTF_8)
+    }
+
+    /** A POST of [body] answered with bytes, or a GET where [body] is null. */
+    fun bytes(path: String, body: JsonNode?, timeout: Duration = Duration.ofMinutes(2)): Bytes {
+        val builder = builder(path, timeout).header("Accept", "audio/*, application/json")
+        val request = if (body == null) builder.GET().build() else builder
+            .header("Origin", origin)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(Json.write(body)))
+            .build()
+        val response = try {
+            http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw OrknuxException("Stopped.")
+        } catch (failure: java.io.IOException) {
+            throw OrknuxException("Could not reach $server: ${failure.message ?: failure.javaClass.simpleName}")
+        }
+        keepCookies(response)
+        return Bytes(response.statusCode(), response.body() ?: ByteArray(0), response.headers().firstValue("content-type").orElse(null))
+    }
+
     fun delete(path: String): Reply =
         send(builder(path, Duration.ofSeconds(15)).header("Origin", origin).DELETE().build())
 

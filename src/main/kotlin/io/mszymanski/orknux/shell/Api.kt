@@ -229,6 +229,31 @@ class Api(val client: OrknuxClient) {
         return Attachment(kept.long("id") ?: kept.str("id")!!.toLong(), kept.str("filename") ?: file.fileName.toString(), kept.str("contentType"), kept.long("sizeBytes") ?: 0)
     }
 
+    /** A picture from the clipboard, uploaded as [upload] uploads a file, from bytes that were never on disk. */
+    fun uploadPicture(workspaceId: String, filename: String, contentType: String, bytes: ByteArray): Attachment {
+        val reply = client.uploadBytes("/api/workspaces/$workspaceId/attachments", "files", filename, contentType, bytes)
+        if (!reply.ok) throw OrknuxException(OrknuxClient.refusalOf(reply.status, reply.body), reply.status)
+        val kept = reply.json().list("attachments").firstOrNull() ?: throw OrknuxException("The server kept nothing of $filename.")
+        return Attachment(kept.long("id") ?: kept.str("id")!!.toLong(), kept.str("filename") ?: filename, kept.str("contentType"), kept.long("sizeBytes") ?: bytes.size.toLong())
+    }
+
+    /** A picture by its address - an attachment on this server, or anywhere else on the web - as bytes and their type. */
+    fun picture(url: String): Picture {
+        val own = if (url.startsWith(client.server)) url.removePrefix(client.server) else url
+        val reply = if (own.startsWith("http://") || own.startsWith("https://")) {
+            // Somewhere else: fetched without this server's credentials, which are not that site's business.
+            val uri = java.net.URI(own)
+            val path = (uri.rawPath ?: "").ifEmpty { "/" } + (uri.rawQuery?.let { "?$it" } ?: "")
+            OrknuxClient("${uri.scheme}://${uri.rawAuthority}").bytes(path, null)
+        } else {
+            client.bytes(if (own.startsWith("/")) own else "/$own", null)
+        }
+        if (!reply.ok) throw OrknuxException(OrknuxClient.refusalOf(reply.status, reply.text), reply.status)
+        val type = Pictures.sniff(reply.bytes) ?: reply.contentType?.substringBefore(';')?.takeIf { it.startsWith("image/") }
+            ?: throw OrknuxException("That is not a picture (${reply.contentType ?: "no type given"}).")
+        return Picture(reply.bytes, type)
+    }
+
     /**
      * The agents this chat's agent asked: the sessions under its own, in the
      * order the family lists them, each with its agent, its task and what it spent.
@@ -349,6 +374,56 @@ class Api(val client: OrknuxClient) {
             }
             reached && seen.add(offer.key.lowercase())
         }
+    }
+
+    /**
+     * What the workspace has decided about voice: its transcription and speech
+     * models, and how a turn ends. A server from before the turn-taking fields
+     * is asked again for the models alone, and its defaults stand.
+     */
+    fun voiceSettings(workspaceId: String): VoiceSettings {
+        val full = "query WorkspaceVoice(\$id: ID!) { workspace(id: \$id) { id transcriptionModelId speechModelId voicePauseEndsTurnMs " +
+            "voiceSpeechOverRoomPercent voiceUnattendedMicrophoneMs voiceBargeInMs voiceBargeInWhileThinking voiceSpeechChunking } }"
+        val node = try {
+            client.graphql(full, vars("id" to workspaceId)).get("workspace")
+        } catch (refused: OrknuxException) {
+            if (!refused.message.orEmpty().contains("voice", ignoreCase = true)) throw refused
+            client.graphql("query WorkspaceVoice(\$id: ID!) { workspace(id: \$id) { id transcriptionModelId speechModelId } }", vars("id" to workspaceId)).get("workspace")
+        }
+        if (node == null || node.isNull) throw OrknuxException("This workspace could not be read.")
+        return VoiceSettings(
+            transcriptionModelId = node.str("transcriptionModelId"),
+            speechModelId = node.str("speechModelId"),
+            pauseEndsTurnMs = node.long("voicePauseEndsTurnMs")?.toInt(),
+            speechOverRoomPercent = node.long("voiceSpeechOverRoomPercent")?.toInt(),
+            unattendedMicrophoneMs = node.long("voiceUnattendedMicrophoneMs")?.toInt(),
+            bargeInMs = node.long("voiceBargeInMs")?.toInt(),
+            bargeInWhileThinking = node.bool("voiceBargeInWhileThinking"),
+            chunking = node.str("voiceSpeechChunking") ?: "SENTENCE",
+        )
+    }
+
+    /** What was said in [wav], as the workspace's transcription model heard it; refused in the server's words. */
+    fun transcribe(workspaceId: String, wav: ByteArray): String {
+        val reply = client.uploadBytes("/api/workspaces/$workspaceId/transcription", "audio", "speech.wav", "audio/wav", wav)
+        if (!reply.ok) throw OrknuxException(OrknuxClient.refusalOf(reply.status, reply.body), reply.status)
+        return reply.json().str("text").orEmpty()
+    }
+
+    /** [text] read aloud by the workspace's speech model: the audio and its content type (MP3). */
+    fun speak(workspaceId: String, text: String): Pair<ByteArray, String?> {
+        val reply = client.bytes("/api/workspaces/$workspaceId/speech", Json.obj().put("text", text))
+        if (!reply.ok) throw OrknuxException(OrknuxClient.refusalOf(reply.status, reply.text), reply.status)
+        return reply.bytes to reply.contentType
+    }
+
+    /** A sound an agent played in a voice turn, by the address the stream gave; on this server unless it names another. */
+    fun sound(url: String): Pair<ByteArray, String?> {
+        val path = if (url.startsWith(client.server)) url.removePrefix(client.server) else url
+        if (path.startsWith("http://") || path.startsWith("https://")) throw OrknuxException("That sound is on another site, which the Shell does not fetch.")
+        val reply = client.bytes(if (path.startsWith("/")) path else "/$path", null)
+        if (!reply.ok) throw OrknuxException(OrknuxClient.refusalOf(reply.status, reply.text), reply.status)
+        return reply.bytes to reply.contentType
     }
 
     fun interrupt(chatId: String) {

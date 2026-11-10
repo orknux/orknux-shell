@@ -1,6 +1,96 @@
 {
   "resources": [
-    { "glob": "io/mszymanski/orknux/shell/version.properties" },
-    { "glob": "io/mszymanski/orknux/shell/release-keys.pem" }
+    {
+      "glob": "io/mszymanski/orknux/shell/version.properties"
+    },
+    {
+      "glob": "io/mszymanski/orknux/shell/release-keys.pem"
+    },
+    {
+      "glob": "META-INF/services/javax.sound.sampled.spi.AudioFileReader"
+    },
+    {
+      "glob": "META-INF/services/javax.sound.sampled.spi.AudioFileWriter"
+    },
+    {
+      "glob": "META-INF/services/javax.sound.sampled.spi.MixerProvider"
+    },
+    {
+      "glob": "javazoom/jl/decoder/sfd.ser"
+    },
+    {
+      "glob": "io/mszymanski/orknux/shell/sound/*"
+    }
+  ],
+  "reflection": [
+    {
+      "type": "com.sun.media.sound.DirectAudioDevice",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "addFormat",
+          "parameterTypes": [
+            "java.util.Vector",
+            "int",
+            "int",
+            "int",
+            "float",
+            "int",
+            "boolean",
+            "boolean"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.media.sound.DirectAudioDeviceProvider$DirectAudioDeviceInfo",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "int",
+            "int",
+            "int",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.media.sound.PortMixerProvider$PortMixerInfo",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "int",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "float[]",
+      "serializable": true
+    },
+    {
+      "type": "java.lang.Boolean",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    }
   ]
 }

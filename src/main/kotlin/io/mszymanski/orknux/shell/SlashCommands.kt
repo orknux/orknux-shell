@@ -11,6 +11,7 @@ object SlashCommands {
         SlashCommand("skill", "[key] [message]", "List the skills the agent can use, or use one"),
         SlashCommand("attach", "[paths]", "Attach files to the next message, or list what is attached"),
         SlashCommand("detach", "<n|all>", "Take an attachment off"),
+        SlashCommand("copy-image", "[n|list]", "Copy a picture an answer showed to the clipboard, the last one unless told"),
         SlashCommand("open", "<n>", "Open a link of the last answer in the browser"),
         SlashCommand("thinking", "[collapsed|expanded|hidden]", "The last turn in full - thinking and tool calls (also Ctrl+O) - or set how thinking is shown"),
         SlashCommand("effort", "[level|default]", "The model's reasoning effort for this chat"),
@@ -19,6 +20,7 @@ object SlashCommands {
         SlashCommand("review", "[--fix] [branch|path]", "Review the uncommitted changes, a branch, or a path"),
         SlashCommand("goal", "<what> until <condition> [max <n>] [reviewer <model>] | stop", "Work at a goal, judged each iteration, until it is met"),
         SlashCommand("answer", null, "Answer what the agent asked, where a question was left open"),
+        SlashCommand("voice", "[headphones]", "Talk instead of typing: it listens, answers, and reads the answer aloud"),
         SlashCommand("usage", null, "Tokens in, out and cached, and the cost, of this chat"),
         SlashCommand("resume", "[number]", "Pick up an earlier chat in this workspace"),
         SlashCommand("clear", null, "Start a new conversation"),
@@ -36,7 +38,7 @@ object SlashCommands {
     )
 
     /** Other spellings people type for a command; not offered in completion. */
-    val ALIASES: Map<String, String> = mapOf("exit" to "quit", "agents" to "agent", "workspaces" to "workspace", "skills" to "skill", "chats" to "resume", "orkxweb-chat" to "orkx-web-chat", "orkxweb-session" to "orkx-web-session", "orkxweb-agent-settings" to "orkx-web-agent-settings")
+    val ALIASES: Map<String, String> = mapOf("exit" to "quit", "agents" to "agent", "workspaces" to "workspace", "skills" to "skill", "chats" to "resume", "talk" to "voice", "copy-picture" to "copy-image", "orkxweb-chat" to "orkx-web-chat", "orkxweb-session" to "orkx-web-session", "orkxweb-agent-settings" to "orkx-web-agent-settings")
 
     val NAMES: List<String> = ALL.map { it.name } + ALIASES.keys
 

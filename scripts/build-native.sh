@@ -11,6 +11,12 @@ set -eu
 cd "$(dirname "$0")/.."
 docker run --rm -v "$PWD:/src" -w /src -e HOME=/src/.cache/home eclipse-temurin:25-jdk \
   ./mvnw -B -q -Dmaven.repo.local=/src/.cache/m2 package -DskipTests
-docker run --rm -v "$PWD:/src" -w /src ghcr.io/graalvm/native-image-community:25-ol8 \
-  -jar target/orknux-shell.jar -o target/orknux-shell
+# Java Sound's library (voice mode) cannot be linked into a native image, so the
+# GraalVM JDK's own copy is carried inside it as a resource and written out on
+# first use - one file to install, as before. CI does the same.
+docker run --rm -v "$PWD:/src" -w /src --entrypoint sh ghcr.io/graalvm/native-image-community:25-ol8 -c '
+  set -e
+  mkdir -p target/native-sound/io/mszymanski/orknux/shell/sound
+  cp "$JAVA_HOME/lib/libjsound.so" target/native-sound/io/mszymanski/orknux/shell/sound/
+  native-image -cp target/orknux-shell.jar:target/native-sound io.mszymanski.orknux.shell.MainKt -o target/orknux-shell'
 ls -la target/orknux-shell

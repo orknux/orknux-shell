@@ -35,6 +35,7 @@ object Cli {
         Usage:
           orknux                               Chat with an agent (asks for a server and signs in the first time)
           orknux login [server]                Sign in: asks for the server, username and password
+          orknux login <pairing link>          Connect with a link from Orknux (Preferences › Connected clients); orknux <link> too
               --token orkx_...                 Sign in with an access token instead
               --username NAME                  Do not ask for the username
               --password-stdin                 Read the password from standard input

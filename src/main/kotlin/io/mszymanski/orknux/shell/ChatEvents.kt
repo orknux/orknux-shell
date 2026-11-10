@@ -72,11 +72,15 @@ sealed interface ChatEvent {
     data class TitleFailed(val reason: String) : ChatEvent
     data class Session(val id: String) : ChatEvent
     data class Drew(val markdown: String) : ChatEvent
-    data class Filed(val filename: String, val contentType: String?) : ChatEvent
+    /** A file the agent's side put on the chat; [id] is the attachment's, at `/api/attachments/{id}`. */
+    data class Filed(val filename: String, val contentType: String?, val id: String? = null) : ChatEvent
     data class Said(val text: String) : ChatEvent
 
     /** A message sent into the turn was read by the agent at its next step: the server's `personRead`. */
     data class PersonRead(val text: String) : ChatEvent
+
+    /** A sound the agent plays to the person in a voice turn - `audio_play` - by its address. */
+    data class Play(val url: String, val contentType: String?) : ChatEvent
     data class Other(val name: String, val data: String) : ChatEvent
 
     companion object {
@@ -103,9 +107,10 @@ sealed interface ChatEvent {
                 "titleFailed" -> TitleFailed(json.str("reason") ?: "")
                 "session" -> Session(json.str("id") ?: "")
                 "drew" -> Drew(json.str("markdown") ?: "")
-                "filed" -> Filed(json.str("filename") ?: "file", json.str("contentType"))
+                "filed" -> Filed(json.str("filename") ?: "file", json.str("contentType"), json.str("id"))
                 "said" -> Said(json.str("text") ?: "")
                 "personRead" -> PersonRead(json.str("text") ?: "")
+                "play" -> json.str("url")?.let { Play(it, json.str("contentType")) } ?: Other(frame.event, frame.data)
                 else -> Other(frame.event, frame.data)
             }
         }

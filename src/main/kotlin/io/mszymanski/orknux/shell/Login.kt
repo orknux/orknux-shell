@@ -44,7 +44,7 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
     /** Asked until there is an answer: an empty one is a slip, not a wish to leave. Ctrl+C or Ctrl+D leaves. */
     private fun askServer(before: String?): String? {
         while (true) {
-            val said = prompter.ask("Orknux server (for example https://orknux.example.com)", before)?.let(::pasted)
+            val said = prompter.ask("Orknux server, or a pairing link from Orknux (Preferences › Connected clients)", before)?.let(::pasted)
             if (said == null) {
                 prompter.say("Not signed in.")
                 return null
@@ -56,7 +56,10 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
 
     fun login(serverArgument: String?, token: String?, username: String?, password: String?): Config? {
         val before = store.load()
-        val server = serverArgument?.takeIf { it.isNotBlank() } ?: askServer(before.server) ?: return null
+        val answer = serverArgument?.takeIf { it.isNotBlank() } ?: askServer(before.server) ?: return null
+        // A pairing link carries its server; a bare code is for the server this Shell already knows.
+        val link = Pairing.parse(answer) ?: before.server?.takeIf { Pairing.isCode(answer) }?.let { it to answer.trim() }
+        val server = link?.first ?: answer
         val client = OrknuxClient(server, token = token)
         val api = Api(client)
         api.compatibility()?.let { (compatible, reason) ->
@@ -67,6 +70,12 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
         }
         val sameServer = before.server?.let { OrknuxClient.normaliseServer(it) } == client.server
         val kept = if (sameServer) before else before.copy(workspaceId = null, workspace = null, agentId = null, agent = null)
+
+        if (link != null && token == null) {
+            paired(client, link.second, kept)?.let { return it }
+            // Not paired: signed in the other way, to the server the link named, so its address need not be typed.
+            prompter.say("Sign in to ${client.server} instead.")
+        }
 
         if (token != null) {
             val me = api.me() ?: run {
@@ -129,6 +138,41 @@ class Login(private val store: ConfigStore, private val prompter: Prompter) {
             }
         }
         return null
+    }
+
+    /**
+     * A pairing code traded for this Shell's own credential, kept as a token
+     * is; null where it could not be had or does not open what the Shell
+     * needs, said in words.
+     */
+    private fun paired(client: OrknuxClient, code: String, kept: Config): Config? {
+        val name = Pairing.name()
+        val credential = try {
+            Pairing.trade(client, code, name)
+        } catch (refused: OrknuxException) {
+            prompter.say("Not paired: ${refused.message}" + if (refused.status == 400) " Make a new link in Orknux: Preferences › Connected clients › Connect a client." else "")
+            return null
+        }
+        return when (val reach = Pairing.reach(client.server, credential)) {
+            is Pairing.Reach.Enough -> {
+                val saved = kept.copy(server = client.server, token = credential, cookies = emptyMap(), user = reach.username)
+                store.save(saved)
+                prompter.say("Connected to ${client.server}" + (reach.username?.let { " as $it" } ?: "") + " with a pairing link, as \"$name\".")
+                saved
+            }
+            Pairing.Reach.ClientDoorsOnly -> {
+                prompter.say(
+                    "Paired, but ${client.server} lets a paired client through the clients' own doors only - the browser, the desktop, " +
+                        "Claude Code and a terminal's commands - and the Shell's chat is not one of them on this server. " +
+                        "\"$name\" is listed under Preferences › Connected clients, where it can be disconnected.",
+                )
+                null
+            }
+            is Pairing.Reach.Refused -> {
+                prompter.say("Paired, but ${client.server} refused the credential: ${reach.reason}")
+                null
+            }
+        }
     }
 
     fun logout(): Boolean {

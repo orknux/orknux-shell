@@ -162,18 +162,20 @@ class Conversation(val api: Api, var workspace: Workspace, var agent: Agent?, va
     }
 
     /**
-     * Says [text], with [attachmentIds] uploaded beforehand, and hands every
+     * Says [text], with [attachmentIds] uploaded beforehand - spoken, where
+     * [voice] says so - and hands every
      * frame of the answer to [onEvent] as it arrives. Returns when the stream
      * ends: answered, failed, or interrupted.
      */
-    fun send(text: String, attachmentIds: List<Long> = emptyList(), onEvent: (ChatEvent) -> Unit) {
+    fun send(text: String, attachmentIds: List<Long> = emptyList(), voice: Boolean = false, onEvent: (ChatEvent) -> Unit) {
         val open = open()
         syncMode()
         interruptedOnce = false
         val request = Json.obj().put("text", text)
         val ids = request.putArray("attachmentIds")
         attachmentIds.forEach { ids.add(it) }
-        request.put("voice", false)
+        // A spoken turn: the server lends the agent the speakers (audio_play) and treats it as the voice panel's.
+        request.put("voice", voice)
         try {
             api.client.stream("/api/chats/${open.id}/stream", request, opened = { body.set(it) }) { frame ->
                 val event = ChatEvent.of(frame)
@@ -295,6 +297,9 @@ class Speeds(private val clock: () -> Long = System::currentTimeMillis) {
     ).joinToString(" · ").ifEmpty { null }
 }
 
+/** A picture a turn showed: what it was called, and where it is - an address on the server, or anywhere. */
+data class ShownPicture(val label: String, val url: String)
+
 /** One piece of a turn's work, kept whole for Ctrl+O: a thought, or a tool call with all it was given and gave back. */
 sealed interface Detail {
     data class Thought(val block: ThinkingBlock) : Detail
@@ -330,6 +335,19 @@ class TurnRenderer(
 
     /** Every link the answer drew, numbered from 1 by its place here. */
     val links: List<Pair<String, String>> get() = markdown.found
+
+    /**
+     * The pictures this turn showed, in order, once each: drawn ones, files the
+     * agent put on the chat that are pictures, and images in the answer's
+     * markdown. What `/copy-image` copies.
+     */
+    val pictures = mutableListOf<ShownPicture>()
+
+    private fun picture(label: String, url: String) {
+        if (pictures.none { it.url == url }) pictures += ShownPicture(label.ifBlank { url.substringAfterLast('/') }, url)
+    }
+
+    private fun picturesIn(markdown: String) = MARKDOWN_IMAGE.findAll(markdown).forEach { picture(it.groupValues[1], it.groupValues[2]) }
 
     /** The answer's text as it came, for whoever reads it after the turn - `/review` lists its findings. */
     val answer = StringBuilder()
@@ -436,8 +454,14 @@ class TurnRenderer(
             }
             is ChatEvent.Compacting -> out.phase("compacting", "Compacting the conversation")
             is ChatEvent.Compacted -> work(theme.muted("Compacted ${event.replaced} earlier turns into a summary (${tokens(event.tokens)} tokens)."))
-            is ChatEvent.Drew -> answerLines(markdown.render(event.markdown))
-            is ChatEvent.Filed -> work(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
+            is ChatEvent.Drew -> {
+                picturesIn(event.markdown)
+                answerLines(markdown.render(event.markdown))
+            }
+            is ChatEvent.Filed -> {
+                if (event.id != null && event.contentType?.startsWith("image/") == true) picture(event.filename, "/api/attachments/${event.id}")
+                work(theme.muted("File: ${event.filename}" + (event.contentType?.let { " ($it)" } ?: "")))
+            }
             // What the model says while it works: its own lines, trimmed - it arrives with newlines after it, which
             // written raw were rows the screen had not counted.
             // Read: said in the transcript, so a message sent mid-turn is seen to land, and the count waiting goes down.
@@ -449,6 +473,7 @@ class TurnRenderer(
 
     /** What is left of the answer, and the links it drew, numbered, once at the end. */
     fun flush() {
+        picturesIn(answer.toString())
         closeThinking(null)
         answerLines(markdown.finish())
     }
@@ -473,6 +498,9 @@ class TurnRenderer(
     }
 
     companion object {
+        /** `![alt](url)`, with an optional title, and the address in angle brackets or not. */
+        val MARKDOWN_IMAGE = Regex("""!\[([^\]]*)]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)""")
+
         /**
          * A finished tool, as the one line it leaves: `✓ terminal_run git status · 0.4s · exit 0`,
          * or `✗` and what went wrong.

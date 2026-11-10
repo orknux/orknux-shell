@@ -23,6 +23,12 @@ class StubOrknux(
     port: Int = 0,
     /** A pause between a turn's frames, so a person watching sees the spinner; none in the suite. */
     private val pace: Long = 0,
+    /** A workspace with transcription and speech models, which hears "what time is it" and answers with a tone. */
+    private val voice: Boolean = false,
+    /** Each answer draws a picture, served at `/api/attachments/9`, for `/copy-image`. */
+    private val pictures: Boolean = false,
+    /** Says each request on standard output, for whoever drives it by hand. */
+    private val log: Boolean = false,
 ) : AutoCloseable {
     private val server = HttpServer.create(InetSocketAddress(host, port), 0)
     val url: String get() = "http://127.0.0.1:${server.address.port}"
@@ -30,6 +36,8 @@ class StubOrknux(
     val requests = CopyOnWriteArrayList<String>()
     val missingOrigin = CopyOnWriteArrayList<String>()
     val startChatInputs = CopyOnWriteArrayList<JsonNode>()
+    /** Every turn's request body, as the stream received it. */
+    val streamRequests = CopyOnWriteArrayList<JsonNode>()
     val nextQueries = CopyOnWriteArrayList<String>()
     val answers = ConcurrentHashMap<String, JsonNode>()
 
@@ -61,6 +69,7 @@ class StubOrknux(
         val path = x.requestURI.path
         val method = x.requestMethod
         requests += "$method $path"
+        if (log) println("$method $path")
         val raw = x.requestBody.readAllBytes()
         val body = String(raw, StandardCharsets.UTF_8)
         if (method != "GET" && x.requestHeaders.getFirst("Origin") != url) missingOrigin += "$method $path"
@@ -80,7 +89,25 @@ class StubOrknux(
             !signedIn -> send(x, 401, "{}")
             path == "/api/session" -> send(x, 200, """{"username":"alice","roles":[],"admin":false}""")
             path == "/graphql" -> graphql(x, Json.parse(body))
-            path == "/api/chats/7/stream" -> stream(x, Json.parse(body))
+            path == "/api/chats/7/stream" -> {
+                if (log) println("stream $body")
+                stream(x, Json.parse(body))
+            }
+            path == "/api/chats/7/interrupt" -> send(x, 200, "{}")
+            path == "/api/attachments/9" -> {
+                val red = StubOrknux::class.java.getResourceAsStream("red.png")!!.readAllBytes()
+                x.responseHeaders.add("Content-Type", "image/png")
+                x.sendResponseHeaders(200, red.size.toLong())
+                x.responseBody.write(red)
+            }
+            path == "/api/workspaces/1/transcription" ->
+                if (voice) send(x, 200, """{"text":"What time is it?","millis":40}""") else send(x, 409, """{"error":"This workspace has no transcription model."}""")
+            path == "/api/workspaces/1/speech" -> {
+                val tone = StubOrknux::class.java.getResourceAsStream("tone.mp3")!!.readAllBytes()
+                x.responseHeaders.add("Content-Type", "audio/mp3")
+                x.sendResponseHeaders(200, tone.size.toLong())
+                x.responseBody.write(tone)
+            }
             path == "/api/workspaces/1/attachments" -> {
                 val type = x.requestHeaders.getFirst("Content-Type") ?: ""
                 val body = String(raw, StandardCharsets.ISO_8859_1)
@@ -88,6 +115,7 @@ class StubOrknux(
                 val start = body.indexOf("\r\n\r\n") + 4
                 val end = body.lastIndexOf("\r\n--$boundary--")
                 uploads.add(Upload(path, type, x.requestHeaders.getFirst("Origin"), body, end - start))
+                if (log) println("upload ${Regex("filename=\"([^\"]*)\"").find(body)?.groupValues?.get(1)} ${end - start} bytes")
                 if (refuseUploads) {
                     send(x, 400, """{"type":"about:blank","title":"Bad Request","status":400,"detail":"huge.bin is 30 MB, and files here may be at most 20 MB."}""")
                 } else {
@@ -115,6 +143,7 @@ class StubOrknux(
         val vars = request.get("variables")
         val data = when {
             query.contains("workspaces(") -> """{"workspaces":{"content":[{"id":"1","name":"Home","commandMarker":null,"commandMarkerDefault":"!"}]}}"""
+            query.contains("WorkspaceVoice") -> """{"workspace":{"id":"1","transcriptionModelId":${if (voice) "\"21\"" else "null"},"speechModelId":${if (voice) "\"22\"" else "null"}}}"""
             query.contains("workspace(") -> """{"workspace":{"id":"1","name":"Home","commandMarker":null,"commandMarkerDefault":"!"}}"""
             query.contains("workspaceAgents(") -> """{"workspaceAgents":{"content":[{"id":"5","name":"Builder","description":"Builds","enabled":true,"skillCatalogs":[],"hiddenSkills":[]}]}}"""
             query.contains("startChat(") -> {
@@ -134,6 +163,7 @@ class StubOrknux(
 
     /** A turn: thinking, a tool call being written, the commands handed to the device and waited for, then the answer. */
     private fun stream(x: HttpExchange, request: JsonNode) {
+        streamRequests.add(request)
         x.responseHeaders.add("Content-Type", "text/event-stream")
         x.sendResponseHeaders(200, 0)
         val out = x.responseBody
@@ -153,6 +183,7 @@ class StubOrknux(
             val failed = answer == null || answer.has("error")
             frame("called", Json.write(Json.obj().put("at", at).put("result", answer?.let { Json.write(it) } ?: "no answer").put("failed", failed)))
         }
+        if (pictures) frame("drew", """{"markdown":"![a red square](/api/attachments/9)"}""")
         frame("chunk", """{"text":"All **done**: the command said hi."}""")
         frame("answered", "{}")
         frame("titled", """{"title":"Saying hi"}""")

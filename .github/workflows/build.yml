@@ -50,14 +50,21 @@ jobs:
       - name: Native image
         if: runner.os != 'Windows'
         run: |
-          docker run --rm -v "$PWD:/src" -w /src ghcr.io/graalvm/native-image-community:25-ol8 \
-            -jar target/orknux-shell.jar -o target/orknux-shell
+          docker run --rm -v "$PWD:/src" -w /src --entrypoint sh ghcr.io/graalvm/native-image-community:25-ol8 -c '
+            set -e
+            mkdir -p target/native-sound/io/mszymanski/orknux/shell/sound
+            cp "$JAVA_HOME/lib/libjsound.so" target/native-sound/io/mszymanski/orknux/shell/sound/
+            native-image -cp target/orknux-shell.jar:target/native-sound io.mszymanski.orknux.shell.MainKt -o target/orknux-shell'
 
       # On Windows it is native-image.cmd, which Git Bash does not find by its bare name.
+      # Java Sound's jsound.dll (voice mode) goes inside the binary as a resource, as libjsound.so does on Linux.
       - name: Native image (Windows)
         if: runner.os == 'Windows'
         shell: cmd
-        run: native-image.cmd -jar target\orknux-shell.jar -o target\orknux-shell
+        run: |
+          mkdir target\native-sound\io\mszymanski\orknux\shell\sound
+          copy "%JAVA_HOME%\bin\jsound.dll" target\native-sound\io\mszymanski\orknux\shell\sound\ || exit /b 1
+          native-image.cmd -cp target\orknux-shell.jar;target\native-sound io.mszymanski.orknux.shell.MainKt -o target\orknux-shell
 
       - name: Smoke test
         shell: bash

@@ -15,6 +15,7 @@
         <kotlin.version>2.4.10</kotlin.version>
         <jline.version>3.30.17</jline.version>
         <jackson.version>2.21.4</jackson.version>
+        <jlayer.version>1.0.1</jlayer.version>
         <junit.version>6.0.3</junit.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <main.class>io.mszymanski.orknux.shell.MainKt</main.class>
@@ -47,6 +48,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
+        </dependency>
+        <!-- MP3, which the server's speech endpoint answers in, decoded for Java Sound to play. -->
+        <dependency>
+            <groupId>javazoom</groupId>
+            <artifactId>jlayer</artifactId>
+            <version>${jlayer.version}</version>
         </dependency>
 
         <dependency>

@@ -355,7 +355,133 @@ class Interactive(
             }
             keys.bind(Reference(name), sequence)
         }
+        bindPictures(r)
         return r
+    }
+
+    // ---- pictures: pasted in, copied out -------------------------------------------------------
+
+    /** Pictures pasted into the line being written, shown in it as chips. */
+    private val imageChips = ImageChips()
+
+    /** Every picture an answer showed in this Shell, in order: `/copy-image <n>` numbers them so. */
+    private val pictures = mutableListOf<ShownPicture>()
+
+    /** The clipboard, found once; refused in words where this computer offers none. */
+    private val clipboard: Result<Clipboard> by lazy { Clipboards.find() }
+
+    /**
+     * Ctrl+V (and Alt+V, for a terminal that keeps Ctrl+V for its own paste)
+     * pastes the clipboard: a picture becomes a chip in the line and an
+     * attachment of the next message, files copied in a file manager do the
+     * same where they are pictures, and text is typed in as it is. A terminal's
+     * own paste - and a file dragged onto it - arrives as text: a path to a
+     * picture is made a chip as well. Backspace at a chip's end takes it out.
+     */
+    private fun bindPictures(r: LineReader) {
+        val keys = r.keyMaps[LineReader.MAIN] ?: return
+        r.widgets["orknux-paste"] = org.jline.reader.Widget { pasteClipboard(r); true }
+        keys.bind(Reference("orknux-paste"), KeyMap.ctrl('V'))
+        keys.bind(Reference("orknux-paste"), KeyMap.alt('v'))
+
+        val deleting = r.widgets[LineReader.BACKWARD_DELETE_CHAR]
+        if (deleting != null) {
+            r.widgets[LineReader.BACKWARD_DELETE_CHAR] = org.jline.reader.Widget {
+                val (chip, length) = imageChips.endingAt(r.buffer.toString(), r.buffer.cursor()) ?: return@Widget deleting.apply()
+                r.buffer.backspace(length)
+                imageChips.remove(chip)?.let { attachments.remove(it) }
+                footer()
+                true
+            }
+        }
+
+        val pasting = r.widgets[LineReader.BEGIN_PASTE] ?: return
+        r.widgets[LineReader.BEGIN_PASTE] = org.jline.reader.Widget {
+            val before = r.buffer.toString()
+            val at = r.buffer.cursor()
+            val done = pasting.apply()
+            val after = r.buffer.toString()
+            val inserted = after.length - before.length
+            if (inserted > 0 && after.startsWith(before.substring(0, at))) {
+                val text = after.substring(at, at + inserted)
+                val paths = PastedPaths.detect(text)?.takeIf { found -> found.all { Pictures.typeOf(it) != null } }
+                if (paths != null) {
+                    r.buffer.cursor(at + inserted)
+                    r.buffer.backspace(inserted)
+                    paths.forEach { pastePicture(r, Path.of(it)) }
+                }
+            }
+            done
+        }
+    }
+
+    private fun pasteClipboard(r: LineReader) {
+        val board = clipboard.getOrElse {
+            say(theme.warning(it.message ?: "No clipboard."))
+            return
+        }
+        when (val held = try { board.read() } catch (failed: Exception) { say(theme.warning("The clipboard could not be read through ${board.name}: ${failed.message}")); return }) {
+            is Clipped.Image -> pasteBytes(r, held.picture)
+            is Clipped.Files -> {
+                val (shown, other) = held.paths.partition { Pictures.typeOf(it) != null }
+                shown.forEach { pastePicture(r, Path.of(it)) }
+                // Anything else copied is typed as its path, which Enter offers to attach as a pasted path always was.
+                if (other.isNotEmpty()) r.buffer.write(other.joinToString(" ") { if (it.contains(' ')) "\"$it\"" else it })
+            }
+            is Clipped.Text -> r.buffer.write(held.text.replace("\r\n", "\n"))
+            Clipped.Empty -> say(theme.muted("The clipboard holds nothing to paste."))
+        }
+    }
+
+    private fun pastePicture(r: LineReader, file: Path) {
+        val bytes = try { Files.readAllBytes(file) } catch (failed: java.io.IOException) { say(theme.danger("${file.fileName} could not be read: ${failed.message}")); return }
+        val type = Pictures.sniff(bytes) ?: Pictures.typeOf(file.fileName.toString()) ?: "application/octet-stream"
+        pasteBytes(r, Picture(bytes, type), file.fileName.toString())
+    }
+
+    /** Uploads a pasted picture at once - as `/attach` uploads a file - and puts its chip in the line. */
+    private fun pasteBytes(r: LineReader, picture: Picture, filename: String? = null) {
+        val name = filename ?: "pasted-image-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.${picture.extension}"
+        val kept = try {
+            api.uploadPicture(conversation.workspace.id, name, picture.contentType, picture.bytes)
+        } catch (refused: OrknuxException) {
+            say(theme.danger("The picture was not attached: ${refused.message}"))
+            return
+        }
+        attachments += kept
+        val chip = imageChips.add(kept, picture)
+        val buffer = r.buffer.toString()
+        val at = r.buffer.cursor()
+        // A chip is a word of its own.
+        val space = if (at > 0 && !buffer[at - 1].isWhitespace()) " " else ""
+        r.buffer.write("$space$chip ")
+        footer()
+    }
+
+    /** `/copy-image [n]`: a picture an answer showed, put on the clipboard as an image - the last one unless told. */
+    private fun copyImage(argument: String?) {
+        if (pictures.isEmpty()) throw OrknuxException("No answer here has shown a picture yet.")
+        if (argument == "list") {
+            pictures.forEachIndexed { i, p -> say("  " + theme.accent("${i + 1}.") + " " + p.label + theme.muted("  " + p.url)) }
+            return
+        }
+        val n = argument?.let { it.toIntOrNull()?.takeIf { n -> n in 1..pictures.size } ?: throw OrknuxException("There is no picture $it: there are ${pictures.size}. /copy-image list names them.") } ?: pictures.size
+        val chosen = pictures[n - 1]
+        val board = clipboard.getOrThrow()
+        val picture = api.picture(chosen.url)
+        board.write(picture)
+        val size = picture.size?.let { (w, h) -> " $w×$h" } ?: ""
+        say(theme.success("✓ ") + theme.muted("Picture $n (") + theme.text(chosen.label) + theme.muted("$size ${picture.extension}) is on the clipboard, through ${board.name}."))
+    }
+
+    /** The pictures a turn showed, numbered on from those before, and said so they can be copied. */
+    private fun notePictures(renderer: TurnRenderer) {
+        val fresh = renderer.pictures.filter { p -> pictures.none { it.url == p.url } }
+        if (fresh.isEmpty()) return
+        pictures += fresh
+        val first = pictures.size - fresh.size + 1
+        val which = if (fresh.size == 1) "picture $first" else "pictures $first-${pictures.size}"
+        say(theme.muted("$which · /copy-image${if (fresh.size == 1 && first == pictures.size) "" else " <n>"} copies ${if (fresh.size == 1) "it" else "one"} to the clipboard"))
     }
 
     /** Which of the listed commands is highlighted. */
@@ -542,7 +668,11 @@ class Interactive(
             } finally {
                 phase = Phase.OTHER
             }
-            val text = line.replace("\\\n", "\n").trim()
+            // The chips of pasted pictures are not words: taken out, and those edited away detached.
+            val taken = imageChips.take(line)
+            taken.dropped.forEach { attachments.remove(it) }
+            if (taken.dropped.isNotEmpty()) footer()
+            val text = taken.text.replace("\\\n", "\n").trim()
             // A message goes to this chat's main session, so it is shown there: back to it first, where another is followed.
             if (text.isNotEmpty() && viewing != Transcript.MAIN && SlashCommands.parse(text) == null) {
                 // On a subagent's screen: into its turn where one is going, and nowhere otherwise - never to another agent.
@@ -560,10 +690,17 @@ class Interactive(
                     say(theme.warning("Not sent: ") + theme.muted("${followed?.agent ?: "this agent"} has finished, so nothing there would read it. ${keyName("sessions")}, Enter goes back to this chat to write to ${conversation.agent?.name ?: "the main agent"}."))
                 }
                 continue
-            } else if (text.isNotEmpty()) showSent(line, text)
+            } else if (text.isNotEmpty()) showSent(line, if (taken.pictures.isEmpty()) text else line.trim())
             // The line the person entered is on the screen now, written by the line editor rather than through say():
             // what follows is after text, so the blank line it asks for is kept.
             if (text.isNotEmpty()) lastBlank = false
+            if (text.isEmpty() && taken.pictures.isNotEmpty()) {
+                // Pictures and no words: they are the message.
+                showSent(line, line.trim())
+                lastBlank = false
+                try { turn("") } catch (refused: OrknuxException) { say(theme.danger(refused.message ?: "Refused.")); say("") }
+                continue
+            }
             if (text.isEmpty()) {
                 // An empty Enter leaves no bare prompt behind: its row is cleared and the screen comes back down.
                 if (region.ansi) {
@@ -696,8 +833,11 @@ class Interactive(
 
     // ---- a turn ------------------------------------------------------------------------------
 
-    /** Sends [text] in [into] - the main conversation unless an `@agent` message chose another - and draws the answer. */
-    private fun turn(text: String, into: Conversation = conversation) {
+    /**
+     * Sends [text] in [into] - the main conversation unless an `@agent` message chose another - and draws the answer.
+     * A spoken turn says so to the server ([voice]), and [heard] is handed every event as well, for reading it aloud.
+     */
+    private fun turn(text: String, into: Conversation = conversation, voice: Boolean = false, heard: ((ChatEvent) -> Unit)? = null) {
         val output = object : TurnOutput {
             override fun line(text: String) = say(text, owner = Transcript.MAIN)
             override fun lines(folded: List<String>, full: List<String>) = sayEither(folded, full)
@@ -740,7 +880,11 @@ class Interactive(
         val keys = Thread.ofPlatform().daemon().name("orknux-shell-keys").start { keysDuringTurn() }
         val chatBefore = into.chat?.id
         try {
-            into.send(text, sending.map { it.id }) { event -> renderer.handle(event) }
+            into.send(text, sending.map { it.id }, voice) { event ->
+                renderer.handle(event)
+                // The reading is the turn's passenger: anything it trips over is its own, never the answer's.
+                heard?.let { runCatching { it(event) }.onFailure { failure -> Trace.log("voice: $failure") } }
+            }
             if (sending.isNotEmpty()) attachments.removeAll(sending)
         } catch (failed: OrknuxException) {
             renderer.flush()
@@ -758,6 +902,7 @@ class Interactive(
             terminal.attributes = saved
         }
         lastThinking = renderer.blocks.toList()
+        notePictures(renderer)
         if (chatBefore == null && api.startedWithoutOrigin) {
             say(theme.warning("This server does not know chats opened in Orknux Shell yet, so its agent cannot run commands here."))
         }
@@ -766,6 +911,240 @@ class Interactive(
         say("")
         if (into === conversation) checkGoal()
         answerQuestions(into)
+    }
+
+    // ---- voice ---------------------------------------------------------------------------------
+
+    /** The answer being read aloud in voice mode, which an interruption stops with the turn. */
+    @Volatile private var spoken: Reading? = null
+
+    /** What was heard and transcribed in voice mode, waiting to be the next turn. */
+    private val heardQueue = LinkedBlockingQueue<String>()
+    private val transcribing = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * Voice mode: the web interface's Voice panel in a terminal. It listens,
+     * sends what it heard as a spoken turn when the person stops talking, and
+     * reads the answer aloud as it is written - and goes on listening the whole
+     * time, so what is said while the agent works is the next turn rather than
+     * lost. Space ends a turn early or cuts the reading short, M mutes, Esc
+     * stops what is happening - the answer, or, while listening, voice mode.
+     *
+     * The workspace chooses the models, as it does for the browser; one with no
+     * transcription model has nothing to hear with and says so, and one with no
+     * speech model is answered on the screen alone.
+     */
+    private fun voice(argument: String?) {
+        val headphones = when (argument?.lowercase()) {
+            null -> false
+            "headphones", "headset" -> true
+            else -> throw OrknuxException("/voice, or /voice headphones where the microphone cannot hear the speakers.")
+        }
+        val workspace = conversation.workspace
+        val settings = api.voiceSettings(workspace.id)
+        if (settings.transcriptionModelId == null) {
+            say(theme.warning("This workspace has no transcription model, so voice mode has nothing to hear you with.") +
+                theme.muted(" An administrator of ${workspace.name} chooses one in the workspace's settings, as for the microphone in the browser."))
+            return
+        }
+        val microphone = Sound.microphone().getOrElse {
+            say(theme.danger("No microphone: ${it.message}.") + theme.muted(" Voice mode needs one this program can open - connected, allowed, and not held by another program."))
+            return
+        }
+        var speaker: Speaker? = null
+        when {
+            settings.speechModelId == null ->
+                say(theme.warning("This workspace has no speech model: ") + theme.muted("answers are shown here and not read aloud. An administrator chooses one in the workspace's settings."))
+            else -> Sound.speakers()?.let { why ->
+                say(theme.warning("No audio output ($why): ") + theme.muted("answers are shown here and not read aloud."))
+            } ?: run { speaker = Speaker() }
+        }
+        val listener = Listener(
+            read = { microphone.read() },
+            settings = { settings },
+            headphones = headphones,
+            speaking = { spoken?.audible == true },
+            thinking = { phase == Phase.TURN && spoken?.audible != true },
+            onUtterance = { wav -> transcribe(workspace.id, wav) },
+            onBargeIn = {
+                // Talked over: what is being read stops, and a turn still being written is stopped on the server too.
+                spoken?.stop()
+                if (active != null) interruptTurn()
+            },
+            flush = { microphone.flush() },
+        )
+        heardQueue.clear()
+        val ears = Thread.ofPlatform().daemon().name("orknux-voice-listen").start {
+            runCatching { listener.run() }.onFailure { say(theme.danger("The microphone stopped: ${it.message ?: it.javaClass.simpleName}")) }
+        }
+        say(theme.bold(theme.accent("Voice mode")) + theme.muted(" · speak, and it answers when you stop" + if (headphones) " · talk over the answer to stop it" else ""))
+        say(theme.muted("Space: done speaking, or cut the answer short · M: mute · Esc: stop the answer, or leave voice mode"))
+        if (!headphones && speaker != null) say(theme.muted("With speakers the microphone does not listen while the answer is read; /voice headphones listens throughout."))
+        say("")
+        try {
+            while (true) {
+                val text = listen(listener) ?: break
+                say("")
+                userLines(text).forEach(::say)
+                say(theme.muted("  spoken"))
+                lastBlank = false
+                val words = StringBuilder()
+                val held = speaker
+                val now = held?.let { s ->
+                    Reading(
+                        chunking = settings.chunking,
+                        speak = { piece -> api.speak(workspace.id, piece) },
+                        fetch = { url -> api.sound(url) },
+                        play = { pcm -> s.play(pcm) },
+                        stopPlaying = { s.stop() },
+                        onFailure = { why -> say(theme.warning("Not read aloud: ") + theme.muted(why)) },
+                    )
+                }
+                spoken = now
+                // What is heard while the agent works waits under the spinner, as typing does, and Ctrl+S sends it now.
+                val relay = Thread.ofVirtual().start {
+                    try {
+                        while (true) queued += heardQueue.take()
+                    } catch (_: InterruptedException) {
+                    }
+                }
+                try {
+                    turn(text, voice = true) { event ->
+                        if (now == null) return@turn
+                        when (event) {
+                            is ChatEvent.Chunk -> {
+                                words.append(event.text)
+                                now.push(words.toString(), false)
+                            }
+                            is ChatEvent.Said -> now.say(event.text)
+                            is ChatEvent.Play -> now.sound(event.url)
+                            is ChatEvent.Answered -> now.push(words.toString(), true)
+                            else -> {}
+                        }
+                    }
+                } finally {
+                    relay.interrupt()
+                    relay.join(500)
+                }
+                now?.push(words.toString(), true)
+                if (now != null && !now.stopped) listenWhileSpeaking(now, listener)
+                spoken = null
+                // Said while the agent worked: the next turn, all of it as one, as the browser panel joins them.
+                if (queued.isNotEmpty()) {
+                    heardQueue.put(queued.joinToString(" "))
+                    queued.clear()
+                }
+            }
+        } finally {
+            spoken?.stop()
+            spoken = null
+            microphone.close()
+            ears.join(1_000)
+            speaker?.close()
+            queued.clear()
+            heardQueue.clear()
+            say(theme.muted("Voice mode is off."))
+        }
+    }
+
+    /** Sends a recording to be transcribed, without holding the microphone up: what it says arrives in [heardQueue]. */
+    private fun transcribe(workspaceId: String, wav: ByteArray) {
+        transcribing.incrementAndGet()
+        Thread.ofVirtual().name("orknux-voice-transcribe").start {
+            try {
+                val words = api.transcribe(workspaceId, wav).trim()
+                if (words.isNotEmpty()) heardQueue.put(words)
+            } catch (failure: OrknuxException) {
+                say(theme.warning("Not heard: ") + theme.muted(failure.message ?: "that could not be transcribed."))
+            } finally {
+                transcribing.decrementAndGet()
+            }
+        }
+    }
+
+    /**
+     * Listening, with the keyboard in raw mode and the live line saying so:
+     * returns what was heard next, or null where the person left voice mode.
+     */
+    private fun listen(listener: Listener): String? {
+        heardQueue.poll()?.let { return it }
+        var left = false
+        var heard: String? = null
+        voiceKeys(
+            line = {
+                val meter = meter(listener.detector.level)
+                when {
+                    transcribing.get() > 0 -> "Transcribing what you said"
+                    listener.muted -> theme.warning("Muted") + theme.muted(" · M to speak again")
+                    else -> "Listening " + meter
+                }
+            },
+            hint = "Space: done speaking · M: mute · Esc: leave voice mode",
+            until = { heardQueue.poll()?.let { heard = it; true } ?: false },
+        ) { key ->
+            when (key) {
+                ' '.code -> listener.finishNow()
+                'm'.code, 'M'.code -> listener.muted = !listener.muted
+                27, 3, 4, 'q'.code -> { left = true; return@voiceKeys true }
+            }
+            false
+        }
+        return if (left) null else heard
+    }
+
+    /** The answer still being read after the turn has ended: Space or Esc cuts in, and either way it is back to listening. */
+    private fun listenWhileSpeaking(now: Reading, listener: Listener) {
+        voiceKeys(
+            line = { if (now.audible) "Speaking" else "Preparing speech" },
+            hint = "Space or Esc: stop reading and listen" + if (listener.muted) " · muted" else "",
+            until = { now.finished.isDone },
+        ) { key ->
+            if (key == ' '.code || key == 27 || key == 3 || key == 13) {
+                now.stop()
+                return@voiceKeys true
+            }
+            if (key == 'm'.code || key == 'M'.code) listener.muted = !listener.muted
+            false
+        }
+    }
+
+    /**
+     * The live line of voice mode and the keys under it, until [until] holds or
+     * [key] says to stop - the same raw keyboard and live block a turn uses.
+     */
+    private fun voiceKeys(line: () -> String, hint: String, until: () -> Boolean, key: (Int) -> Boolean) {
+        val saved = terminal.enterRawMode()
+        val raw = terminal.attributes
+        raw.setLocalFlag(Attributes.LocalFlag.ISIG, false)
+        terminal.attributes = raw
+        region.thinkingHint = null
+        region.phase("voice", line())
+        region.start { listOf("", theme.muted(hint)) + if (status != null) emptyList() else listOf(rule(), " " + statusText()) }
+        val input = terminal.reader()
+        try {
+            var n = 0
+            while (!until()) {
+                val read = input.read(50)
+                if (read >= 0) {
+                    // An escape sequence - an arrow - is not Esc.
+                    if (read == 27 && input.peek(30) != NonBlockingReader.READ_EXPIRED) { drainSequence(input); continue }
+                    if (key(read)) return
+                }
+                if (++n % 2 == 0) {
+                    region.phase("voice", line())
+                    region.tick()
+                }
+            }
+        } finally {
+            region.stop()
+            terminal.attributes = saved
+        }
+    }
+
+    /** How loud the room is, as a bar of eight. */
+    private fun meter(level: Double): String {
+        val filled = (level * 8).toInt().coerceIn(0, 8)
+        return theme.accent("▮".repeat(filled)) + theme.muted("▯".repeat(8 - filled))
     }
 
     // ---- questions the agent put to the person -------------------------------------------------
@@ -1047,6 +1426,8 @@ class Interactive(
 
     /** Ctrl+C or Esc during a turn: the spinner stops at once, and the server is asked to stop. */
     private fun interruptTurn() {
+        // In voice mode the answer being read stops with the answer being written.
+        spoken?.stop()
         val said = active?.interrupt() ?: return
         region.halt("Interrupted")
         say("")
@@ -1779,6 +2160,8 @@ class Interactive(
             "review" -> review(argument)
             "goal" -> goal(argument)
             "update" -> update()
+            "voice" -> voice(argument)
+            "copy-image" -> copyImage(argument)
             "answer" -> answerQuestions(conversation, askedFor = true)
             "sessions" -> sessions()
             "orkx-web-chat" -> openInBrowser(
@@ -2094,6 +2477,7 @@ class Interactive(
             "Shift+Tab" to "switch mode: auto, ask, plan",
             keyName("details") to "expand thoughts and tool calls, and fold them again",
             keyName("sessions") to "this chat's sessions - its own and its agents'",
+            "Ctrl+V (or Alt+V)" to "paste: a picture on the clipboard is attached to the next message, as a chip Backspace takes out",
             "Ctrl+L" to "clear the screen",
             "Ctrl+C / Esc" to "interrupt the answer (twice: stop waiting)",
             "Ctrl+D" to "quit",
@@ -2764,7 +3148,7 @@ class Interactive(
          */
         val WHILE_WORKING = setOf(
             "attach", "detach", "open", "thinking", "effort", "subagents", "sessions", "usage", "mode", "rules",
-            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help",
+            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help", "copy-image",
         )
 
         /** What the configurable keys become inside the turn's key loop, below anything a key can be. */

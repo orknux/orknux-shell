@@ -4,6 +4,55 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## Unreleased
+
+### Added
+
+- Voice mode: `/voice` (or `/talk`) talks to the agent instead of typing to
+  it, as the Voice panel on the web Chat page does. It listens to the
+  microphone, sends what you said when you stop - the workspace's
+  transcription model writes it down - and reads the answer aloud with the
+  workspace's speech model as it is written, sentence by sentence, then
+  listens again. What you say while the agent works waits under the spinner
+  and is the next turn (Ctrl+S sends it now). Space ends your turn early or
+  cuts the reading short, M mutes, Esc stops the answer - on the server too,
+  as the panel's stop does - or, while listening, leaves voice mode. The
+  workspace's turn-taking settings (the pause that ends a turn, how loud a
+  voice is against the room, barge-in) are the ones the browser uses.
+- `/voice headphones` keeps listening while the answer is read, so talking
+  over it stops it. With speakers there is no echo cancellation in a
+  terminal, so the Shell does not listen to itself: Space or Esc cuts in.
+- A pairing link from Orknux (Preferences › Connected clients › Connect a
+  client) is taken where the Shell asks for a server, and as `orknux <link>` or
+  `orknux login <link>`: the Shell trades it for a credential of its own and
+  signs in with no address or password typed; a code alone pairs with the
+  server it already knows. Where the server lets paired clients through only
+  the clients' own doors, which the Shell's chat is not, it says so and asks
+  for a username and password for the link's server instead.
+- A workspace with no transcription model, one with no speech model (answers
+  are then shown and not read), and a computer with no microphone or no audio
+  output are each said in words when voice mode starts.
+
+- Pictures pasted into the chat: Ctrl+V (or Alt+V) attaches a picture on the
+  clipboard to the next message, shown in the line as a chip like
+  `[image 1: 1280×720 png]` that Backspace takes out; files copied in a file
+  manager and a pasted or dragged path to a picture do the same. It uploads to
+  the workspace's attachments and goes with the message by id, as the web chat
+  sends one.
+- `/copy-image [n|list]` copies a picture an answer showed - drawn, put on the
+  chat as a file, or in its markdown - to the clipboard as an image; each one
+  is numbered under its answer.
+- The clipboard is wl-clipboard on Wayland, xclip on X11 and PowerShell on
+  Windows, with Java's AWT clipboard last under `java -jar`; where there is
+  none, Ctrl+V and `/copy-image` say what is missing.
+
+### Changed
+
+- The release binaries carry Java Sound's small native library (`libjsound.so`,
+  `jsound.dll`) inside them and write it out once, beside the configuration
+  (`sound/<version>/`), the first time voice mode is used. On Linux it needs
+  ALSA's `libasound.so.2`, which every desktop has.
+
 ## 1.0.37
 
 ### Fixed
