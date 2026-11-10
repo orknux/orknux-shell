@@ -32,7 +32,7 @@ object SlashCommands {
         SlashCommand("orkx-web-chat", null, "Open this chat in Orknux in the browser"),
         SlashCommand("orkx-web-session", null, "Open this conversation's session log in the browser"),
         SlashCommand("orkx-web-agent-settings", null, "Open the agent's settings in the browser"),
-        SlashCommand("paste", null, "Attach the picture on the clipboard to the next message - what Ctrl+V does, where the terminal keeps Ctrl+V"),
+        SlashCommand("paste", "[message]", "Attach the picture on the clipboard - and send it with the message, if there is one"),
         SlashCommand("update", null, "Install the newest Orknux Shell, checked against Orknux's release key"),
         SlashCommand("version", null, "This Shell's version, the server it is talking to, and the clipboard it uses"),
         SlashCommand("help", null, "What there is to type"),

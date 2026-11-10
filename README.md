@@ -81,7 +81,7 @@ disconnected for good in that same list.
 | `/copy-image [n\|list]` | copy a picture an answer showed to the clipboard, as an image - the last one unless told (below) |
 | `/voice [headphones]` | talk instead of typing: it listens, answers, and reads the answer aloud (below) |
 | `/update` | install the newest Orknux Shell |
-| `/paste` | attach the picture on the clipboard to the next message |
+| `/paste [message]` | attach the picture on the clipboard, and send it with the message if there is one |
 | `/version` | the Shell's version, its server, clipboard and terminal |
 | `/usage`, `/resume`, `/clear`, `/workspace`, `/mode`, `/theme`, `/rules`, `/help`, `/quit` | |
 

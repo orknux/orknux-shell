@@ -440,7 +440,7 @@ class Interactive(
      * by a key. Listed with the other attachments rather than as a chip, since
      * no line is being written while a command runs.
      */
-    private fun pasteToNext() {
+    private fun pasteToNext(message: String? = null) {
         val board = clipboard.getOrElse { throw OrknuxException(it.message ?: "No clipboard.") }
         when (val held = try { board.read() } catch (failed: Exception) { throw OrknuxException("The clipboard could not be read through ${board.name}: ${failed.message}") }) {
             is Clipped.Image -> {
@@ -453,12 +453,23 @@ class Interactive(
                 }
                 attachments += kept
                 val size = picture.size?.let { (w, h) -> " ${w}×$h" } ?: ""
-                say(theme.muted("Attached ") + theme.text(kept.filename) + theme.muted("$size - it goes with your next message."))
-                footer()
+                if (message == null) {
+                    say(theme.muted("Attached ") + theme.text(kept.filename) + theme.muted("$size - it goes with your next message."))
+                    footer()
+                } else {
+                    // `/paste what is this?`: the picture and the question go together, now.
+                    say(theme.muted("Attached ") + theme.text(kept.filename) + theme.muted(size))
+                    turn(message)
+                }
             }
             is Clipped.Files -> {
                 val shown = held.paths.filter { Pictures.typeOf(it) != null }
-                if (shown.isEmpty()) say(theme.muted("The clipboard holds files that are not pictures; /attach <path> attaches any file.")) else attach(shown)
+                if (shown.isEmpty()) {
+                    say(theme.muted("The clipboard holds files that are not pictures; /attach <path> attaches any file."))
+                } else {
+                    attach(shown)
+                    if (message != null && attachments.isNotEmpty()) turn(message)
+                }
             }
             is Clipped.Text -> say(theme.muted("The clipboard holds text, not a picture. Copy the picture itself (in a browser: right-click › Copy image)."))
             Clipped.Empty -> say(theme.muted("The clipboard holds nothing to paste."))
@@ -2048,11 +2059,11 @@ class Interactive(
     private val startedAt = System.currentTimeMillis()
 
     /**
-     * The status bar's height: its rule and its row. Fixed, since JLine's status
+     * The status bar's height: a blank row, its rule and its row. Fixed, since JLine's status
      * cannot change height under text without losing where the cursor is; the
      * workspace is in the bar at the top of the window instead.
      */
-    private fun barRows(): Int = 2
+    private fun barRows(): Int = 3
 
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
@@ -2079,7 +2090,8 @@ class Interactive(
             // Each 📎 is two columns wide and counted as one: a rule one column too long wraps and moves the bar.
             chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - attachments.size).coerceAtLeast(0)))
         }
-        val lines = listOf(rule, " " + statusText())
+        // A blank row first: the line being written is not pressed against the rule.
+        val lines = listOf("", rule, " " + statusText())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
@@ -2213,7 +2225,7 @@ class Interactive(
             "goal" -> goal(argument)
             "update" -> update()
             "version" -> version()
-            "paste" -> pasteToNext()
+            "paste" -> pasteToNext(slash.argument?.trim()?.takeIf { it.isNotEmpty() })
             "voice" -> voice(argument)
             "copy-image" -> copyImage(argument)
             "answer" -> answerQuestions(conversation, askedFor = true)
@@ -3202,7 +3214,7 @@ class Interactive(
          */
         val WHILE_WORKING = setOf(
             "attach", "detach", "open", "thinking", "effort", "subagents", "sessions", "usage", "mode", "rules",
-            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help", "copy-image", "version", "paste",
+            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help", "copy-image", "version",
         )
 
         /** What the configurable keys become inside the turn's key loop, below anything a key can be. */

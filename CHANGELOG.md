@@ -4,6 +4,18 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.41
+
+### Added
+
+- `/paste <message>` attaches the picture on the clipboard and sends the
+  message with it at once: `/paste what is this?`.
+
+### Changed
+
+- A blank row between the line being written and the status bar, so the
+  prompt is not pressed against the bar's rule.
+
 ## 1.0.40
 
 ### Fixed
