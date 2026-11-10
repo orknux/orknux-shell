@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.42
+
+### Fixed
+
+- The Windows build found no clipboard - "PowerShell was not found on the
+  PATH" - so pasting and `/copy-image` did nothing: Windows spells the search
+  path `Path`, and the Shell looked only for `PATH`. It is found however it is
+  spelled now, and Windows PowerShell in its usual place where it is not on it.
+
 ## 1.0.41
 
 ### Added

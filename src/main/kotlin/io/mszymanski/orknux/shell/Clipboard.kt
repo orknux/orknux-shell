@@ -65,9 +65,23 @@ object Clipboards {
 
     /** Whether [program] is on the PATH. */
     fun onPath(program: String, env: Map<String, String> = System.getenv()): Boolean =
-        (env["PATH"] ?: "").split(java.io.File.pathSeparatorChar).any { dir ->
-            dir.isNotBlank() && listOf("", ".exe", ".cmd").any { Files.isExecutable(Path.of(dir, program + it)) }
+        pathOf(env).split(java.io.File.pathSeparatorChar).any { dir ->
+            dir.isNotBlank() && listOf("", ".exe", ".cmd").any { runCatching { Files.isExecutable(Path.of(dir, program + it)) }.getOrDefault(false) }
         }
+
+    /**
+     * The search path, whatever its name is spelled: Windows calls it `Path`, and
+     * the map Java hands over is not case-insensitive the way `getenv("PATH")` is -
+     * so `env["PATH"]` found nothing there, and with it no PowerShell.
+     */
+    fun pathOf(env: Map<String, String>): String =
+        env["PATH"] ?: env.entries.firstOrNull { it.key.equals("PATH", ignoreCase = true) }?.value ?: ""
+
+    /** Windows PowerShell where Windows always installs it, for a search path that does not lead there. */
+    fun windowsPowerShell(env: Map<String, String>): String? {
+        val root = env.entries.firstOrNull { it.key.equals("SystemRoot", ignoreCase = true) }?.value ?: "C:\\Windows"
+        return Path.of(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe").takeIf { runCatching { Files.isRegularFile(it) }.getOrDefault(false) }?.toString()
+    }
 
     /** The clipboard this computer offers, or why there is none, in words saying what to install. */
     fun find(
@@ -78,7 +92,7 @@ object Clipboards {
         awt: () -> Clipboard? = ::awtClipboard,
     ): Result<Clipboard> {
         if (Platform.isWindows(os)) {
-            val shell = listOf("powershell", "pwsh").firstOrNull(found)
+            val shell = listOf("powershell", "pwsh").firstOrNull(found) ?: windowsPowerShell(env)
             if (shell != null) return Result.success(WindowsClipboard(runner, shell))
             awt()?.let { return Result.success(it) }
             return Result.failure(OrknuxException("No clipboard: PowerShell was not found on the PATH."))

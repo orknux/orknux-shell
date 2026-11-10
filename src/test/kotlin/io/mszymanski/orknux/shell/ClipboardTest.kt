@@ -42,7 +42,9 @@ class ClipboardTest {
         assertTrue(Clipboards.find(mapOf("WAYLAND_DISPLAY" to "w"), "Linux", none, awt = { null }).exceptionOrNull()!!.message!!.contains("wl-clipboard"))
         assertTrue(Clipboards.find(mapOf("DISPLAY" to ":0"), "Linux", none, awt = { null }).exceptionOrNull()!!.message!!.contains("xclip is not installed"))
         assertTrue(Clipboards.find(emptyMap(), "Linux", all, awt = { null }).exceptionOrNull()!!.message!!.contains("there is no display here"))
-        assertTrue(Clipboards.find(emptyMap(), "Windows 11", none, awt = { null }).exceptionOrNull()!!.message!!.contains("PowerShell"))
+        // A Windows root with no PowerShell in it, so the suite says the same on a Windows machine, which has one.
+        val bare = mapOf("SystemRoot" to "/nowhere-${System.nanoTime()}")
+        assertTrue(Clipboards.find(bare, "Windows 11", none, awt = { null }).exceptionOrNull()!!.message!!.contains("PowerShell"))
     }
 
     /**
@@ -67,6 +69,20 @@ class ClipboardTest {
             ),
         )
         assertEquals(Clipped.Files(listOf("/mnt/c/Users/a/shot.png")), WindowsClipboard(fake, "powershell.exe", wsl = true).read())
+    }
+
+    /** Windows spells it `Path`, and the environment map Java hands over is case-sensitive: it is found all the same. */
+    @Test
+    fun `the search path is found however it is spelled, and Windows' own PowerShell where it is not on it`(@org.junit.jupiter.api.io.TempDir dir: java.nio.file.Path) {
+        val program = java.nio.file.Files.createFile(dir.resolve("powershell.exe"))
+        program.toFile().setExecutable(true)
+        assertTrue(Clipboards.onPath("powershell", mapOf("Path" to dir.toString())))
+        assertTrue(!Clipboards.onPath("powershell", mapOf("Path" to "/nowhere")))
+
+        val root = java.nio.file.Files.createDirectories(dir.resolve("Windows/System32/WindowsPowerShell/v1.0"))
+        java.nio.file.Files.createFile(root.resolve("powershell.exe"))
+        val found = Clipboards.find(mapOf("SystemRoot" to dir.resolve("Windows").toString()), "Windows 11", { false }, awt = { null }).getOrThrow()
+        assertIs<WindowsClipboard>(found)
     }
 
     // ---- reading -------------------------------------------------------------------------------
