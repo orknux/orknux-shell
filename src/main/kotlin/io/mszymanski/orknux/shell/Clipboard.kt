@@ -59,6 +59,10 @@ object Clipboards {
         process.exitValue() to out
     }
 
+    /** Whether this is Linux under WSL, which says so in its environment. */
+    fun isWsl(env: Map<String, String> = System.getenv()): Boolean =
+        !env["WSL_DISTRO_NAME"].isNullOrBlank() || !env["WSL_INTEROP"].isNullOrBlank()
+
     /** Whether [program] is on the PATH. */
     fun onPath(program: String, env: Map<String, String> = System.getenv()): Boolean =
         (env["PATH"] ?: "").split(java.io.File.pathSeparatorChar).any { dir ->
@@ -79,6 +83,13 @@ object Clipboards {
             awt()?.let { return Result.success(it) }
             return Result.failure(OrknuxException("No clipboard: PowerShell was not found on the PATH."))
         }
+        /*
+         * Inside WSL the clipboard that matters is Windows': a picture copied in a
+         * Windows browser is there, and WSLg's Linux clipboard does not reliably
+         * carry pictures across. Windows' own PowerShell is reachable from WSL by
+         * name, so it is read the way the Windows build reads it.
+         */
+        if (isWsl(env) && found("powershell.exe")) return Result.success(WindowsClipboard(runner, "powershell.exe", wsl = true))
         // wl-copy and xclip stay behind to hold what they were given; in a session of their own they outlive the Shell.
         val detach = if (found("setsid")) listOf("setsid") else emptyList()
         if (!env["WAYLAND_DISPLAY"].isNullOrBlank() && found("wl-paste") && found("wl-copy")) return Result.success(WaylandClipboard(runner, detach))
@@ -179,8 +190,17 @@ class XClipboard(private val runner: Clipboards.Runner, private val detach: List
  * files copied in Explorer as their paths, or text. Its answers come back as
  * one tagged line of base64, so no console code page touches them.
  */
-class WindowsClipboard(private val runner: Clipboards.Runner, private val shell: String = "powershell") : Clipboard {
-    override val name = "PowerShell"
+class WindowsClipboard(
+    private val runner: Clipboards.Runner,
+    private val shell: String = "powershell",
+    /** Reached from WSL: a copied file's Windows path is turned into the Linux one, and the other way round to copy. */
+    private val wsl: Boolean = false,
+) : Clipboard {
+    override val name = if (wsl) "Windows' clipboard, through powershell.exe" else "PowerShell"
+
+    /** A path as the other side spells it, through WSL's own wslpath; as it was where that does not answer. */
+    private fun converted(path: String, flag: String): String =
+        runner.output(listOf("wslpath", flag, path))?.toString(Charsets.UTF_8)?.trim()?.takeIf { it.isNotEmpty() } ?: path
 
     private fun ps(script: String) = listOf(shell, "-NoProfile", "-NonInteractive", "-STA", "-Command", script)
 
@@ -190,7 +210,7 @@ class WindowsClipboard(private val runner: Clipboards.Runner, private val shell:
         val body = runCatching { Base64.getDecoder().decode(out.substringAfter(':', "")) }.getOrNull() ?: return Clipped.Empty
         return when (tag) {
             "IMAGE" -> Clipped.Image(Picture(body, "image/png"))
-            "FILES" -> Clipped.Files(body.toString(Charsets.UTF_8).lines().filter { it.isNotBlank() })
+            "FILES" -> Clipped.Files(body.toString(Charsets.UTF_8).lines().filter { it.isNotBlank() }.map { if (wsl) converted(it.trim(), "-u") else it })
             "TEXT" -> Clipped.Text(body.toString(Charsets.UTF_8))
             else -> Clipped.Empty
         }
@@ -200,7 +220,7 @@ class WindowsClipboard(private val runner: Clipboards.Runner, private val shell:
         val file = Files.createTempFile("orknux-copy-", "." + picture.extension)
         try {
             Files.write(file, picture.bytes)
-            val path = file.toString().replace("'", "''")
+            val path = (if (wsl) converted(file.toString(), "-w") else file.toString()).replace("'", "''")
             val (code, _) = runner.run(ps(WRITE.replace("{path}", path)), null, true)
             if (code != 0) throw OrknuxException("Windows did not take the picture onto the clipboard.")
         } finally {

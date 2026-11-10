@@ -45,6 +45,30 @@ class ClipboardTest {
         assertTrue(Clipboards.find(emptyMap(), "Windows 11", none, awt = { null }).exceptionOrNull()!!.message!!.contains("PowerShell"))
     }
 
+    /**
+     * Inside WSL the picture a person copied in Windows is on Windows' clipboard,
+     * which WSLg's Linux one does not reliably carry: the Shell goes to Windows'
+     * own PowerShell, even with a Linux clipboard to hand.
+     */
+    @Test
+    fun `inside WSL the Windows clipboard is used, and a copied file's path is turned into WSL's`() {
+        val wsl = mapOf("WSL_DISTRO_NAME" to "Ubuntu", "WAYLAND_DISPLAY" to "wayland-0", "DISPLAY" to ":0")
+        val found = Clipboards.find(wsl, "Linux", { true }, awt = { null }).getOrThrow()
+        assertIs<WindowsClipboard>(found)
+        assertTrue(found.name.contains("powershell.exe"))
+        // No powershell.exe on the PATH (interop switched off): the Linux clipboard, as anywhere else.
+        assertIs<WaylandClipboard>(Clipboards.find(wsl, "Linux", { it != "powershell.exe" }, awt = { null }).getOrThrow())
+
+        val windowsPath = "C:\\Users\\a\\shot.png"
+        val fake = Fake(
+            mapOf(
+                listOf("powershell.exe") to ("FILES:" + Base64.getEncoder().encodeToString(windowsPath.toByteArray()) + "\r\n").toByteArray(),
+                listOf("wslpath", "-u", windowsPath) to "/mnt/c/Users/a/shot.png\n".toByteArray(),
+            ),
+        )
+        assertEquals(Clipped.Files(listOf("/mnt/c/Users/a/shot.png")), WindowsClipboard(fake, "powershell.exe", wsl = true).read())
+    }
+
     // ---- reading -------------------------------------------------------------------------------
 
     @Test

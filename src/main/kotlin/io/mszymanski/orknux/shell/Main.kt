@@ -42,7 +42,7 @@ object Cli {
           orknux logout                        Sign out, and forget the session
           orknux -p "message"                  Say one thing, print the answer, and leave
           orknux update                        Install the newest version, checked against Orknux's release key
-          orknux --version                     The version
+          orknux version                       The version (--version too)
 
         Options for a chat:
           --workspace NAME   --agent NAME   --mode auto|ask|plan   --config FILE
@@ -59,6 +59,7 @@ object Cli {
                 "--version", "-V", "-v" -> o = o.copy(command = "version")
                 "--help", "-h", "help" -> o = o.copy(command = "help")
                 "login", "logout", "update" -> o = o.copy(command = a)
+                "version" -> o = o.copy(command = "version")
                 "--token" -> o = o.copy(token = value(a))
                 "--username" -> o = o.copy(username = value(a))
                 "--password-stdin" -> o = o.copy(passwordStdin = true)

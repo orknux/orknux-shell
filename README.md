@@ -81,6 +81,8 @@ disconnected for good in that same list.
 | `/copy-image [n\|list]` | copy a picture an answer showed to the clipboard, as an image - the last one unless told (below) |
 | `/voice [headphones]` | talk instead of typing: it listens, answers, and reads the answer aloud (below) |
 | `/update` | install the newest Orknux Shell |
+| `/paste` | attach the picture on the clipboard to the next message |
+| `/version` | the Shell's version, its server, clipboard and terminal |
 | `/usage`, `/resume`, `/clear`, `/workspace`, `/mode`, `/theme`, `/rules`, `/help`, `/quit` | |
 
 Keys: Enter sends; Alt+Enter, Shift+Enter (where the terminal tells them
@@ -100,7 +102,9 @@ clock.
 ## Pictures in and out
 
 **Pasting.** Ctrl+V pastes the clipboard (Alt+V too, for a terminal that keeps
-Ctrl+V for its own paste - Windows Terminal does). A picture on it is uploaded
+Ctrl+V for its own paste - Windows Terminal does, for Ctrl+Shift+V as well, and
+its paste carries text only). `/paste` does the same with no key at all, and
+lists the picture with the message's other attachments. A picture on it is uploaded
 at once to the workspace's attachments, as `/attach` uploads a file, and stands
 in the line as a chip, `[image 1: 1280×720 png]`; it goes with the message as
 the web chat sends one, by its attachment id. Backspace at a chip's end takes
@@ -122,7 +126,10 @@ the terminal's, as before.
 **The clipboard** is reached through the platform's own clients: wl-paste and
 wl-copy (the wl-clipboard package) in a Wayland session, xclip on X11 or
 XWayland - xsel moves only text - and on Windows PowerShell's Windows Forms
-clipboard. Under `java -jar` with a display and none of those, Java's AWT
+clipboard. Inside WSL it is Windows' clipboard, through `powershell.exe`, since
+a picture copied in Windows is there and WSLg's Linux clipboard does not
+reliably carry it; a file copied in Explorer arrives as its WSL path. `/version`
+names the clipboard the Shell reaches, or why there is none. Under `java -jar` with a display and none of those, Java's AWT
 clipboard is the last resort; the native binary carries no AWT and does not
 need it. Where there is none - no tool installed, or no display at all, as
 over ssh, where the clipboard is the other computer's - Ctrl+V and

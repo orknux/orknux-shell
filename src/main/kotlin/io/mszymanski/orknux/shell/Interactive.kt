@@ -433,6 +433,46 @@ class Interactive(
         }
     }
 
+    /**
+     * `/paste`: the clipboard's picture attached to the next message, with no key
+     * pressed - Windows Terminal keeps Ctrl+V and Ctrl+Shift+V for its own paste,
+     * which carries text only, so a picture copied there never reaches the Shell
+     * by a key. Listed with the other attachments rather than as a chip, since
+     * no line is being written while a command runs.
+     */
+    private fun pasteToNext() {
+        val board = clipboard.getOrElse { throw OrknuxException(it.message ?: "No clipboard.") }
+        when (val held = try { board.read() } catch (failed: Exception) { throw OrknuxException("The clipboard could not be read through ${board.name}: ${failed.message}") }) {
+            is Clipped.Image -> {
+                val picture = held.picture
+                val name = "pasted-image-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.${picture.extension}"
+                val kept = try {
+                    api.uploadPicture(conversation.workspace.id, name, picture.contentType, picture.bytes)
+                } catch (refused: OrknuxException) {
+                    throw OrknuxException("The picture was not attached: ${refused.message}")
+                }
+                attachments += kept
+                val size = picture.size?.let { (w, h) -> " ${w}×$h" } ?: ""
+                say(theme.muted("Attached ") + theme.text(kept.filename) + theme.muted("$size - it goes with your next message."))
+                footer()
+            }
+            is Clipped.Files -> {
+                val shown = held.paths.filter { Pictures.typeOf(it) != null }
+                if (shown.isEmpty()) say(theme.muted("The clipboard holds files that are not pictures; /attach <path> attaches any file.")) else attach(shown)
+            }
+            is Clipped.Text -> say(theme.muted("The clipboard holds text, not a picture. Copy the picture itself (in a browser: right-click › Copy image)."))
+            Clipped.Empty -> say(theme.muted("The clipboard holds nothing to paste."))
+        }
+    }
+
+    /** `/version`: what is running, against what, and with which clipboard - the first things to know when something does not work. */
+    private fun version() {
+        say(theme.bold(theme.accent("Orknux Shell")) + theme.text(" ${Version.VERSION}"))
+        say(theme.muted("  server     ") + api.client.server)
+        say(theme.muted("  clipboard  ") + clipboard.fold({ it.name }, { theme.warning(it.message ?: "none") }))
+        say(theme.muted("  terminal   ") + terminal.type + theme.muted(" · ${System.getProperty("os.name")}") + (if (Clipboards.isWsl()) theme.muted(" (WSL)") else ""))
+    }
+
     private fun pastePicture(r: LineReader, file: Path) {
         val bytes = try { Files.readAllBytes(file) } catch (failed: java.io.IOException) { say(theme.danger("${file.fileName} could not be read: ${failed.message}")); return }
         val type = Pictures.sniff(bytes) ?: Pictures.typeOf(file.fileName.toString()) ?: "application/octet-stream"
@@ -2160,6 +2200,8 @@ class Interactive(
             "review" -> review(argument)
             "goal" -> goal(argument)
             "update" -> update()
+            "version" -> version()
+            "paste" -> pasteToNext()
             "voice" -> voice(argument)
             "copy-image" -> copyImage(argument)
             "answer" -> answerQuestions(conversation, askedFor = true)
@@ -3148,7 +3190,7 @@ class Interactive(
          */
         val WHILE_WORKING = setOf(
             "attach", "detach", "open", "thinking", "effort", "subagents", "sessions", "usage", "mode", "rules",
-            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help", "copy-image",
+            "orkx-web-chat", "orkx-web-session", "orkx-web-agent-settings", "update", "help", "copy-image", "version", "paste",
         )
 
         /** What the configurable keys become inside the turn's key loop, below anything a key can be. */

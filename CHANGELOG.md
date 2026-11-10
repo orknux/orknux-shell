@@ -4,6 +4,24 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.39
+
+### Added
+
+- `/paste` attaches the picture on the clipboard to the next message with no
+  key pressed, for a terminal that keeps Ctrl+V for its own paste - Windows
+  Terminal does, and its paste carries text only, so a copied picture never
+  reached the Shell by Ctrl+V or Ctrl+Shift+V there.
+- `/version` (and `orknux version`) says this Shell's version, the server it
+  is talking to, the clipboard it reaches and the terminal it runs in.
+
+### Fixed
+
+- Pasting a picture in WSL: the Shell read WSL's Linux clipboard, which does
+  not reliably carry a picture copied in Windows. Inside WSL it now reads and
+  writes Windows' own clipboard through `powershell.exe`, and a file copied in
+  Explorer arrives as its WSL path.
+
 ## 1.0.38
 
 ### Added
