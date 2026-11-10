@@ -94,8 +94,11 @@ class Reading(
 
     /** Abandons it: nothing asked for is played, nothing more is asked for, and what plays stops now. */
     fun stop() {
-        if (stopped) return
-        stopped = true
+        // Under the same lock the maker asks under, so once this returns nothing more is asked for.
+        synchronized(asking) {
+            if (stopped) return
+            stopped = true
+        }
         audible = false
         stopPlaying()
         maker.interrupt()
@@ -103,13 +106,20 @@ class Reading(
         finished.complete(false)
     }
 
+    /** Held while a sentence is asked for and while the reading stops, so the two cannot cross. */
+    private val asking = Object()
+
     private fun make() {
         try {
             while (!stopped) {
                 val clip = when (val item = pending.take()) {
                     is Item.End -> Clip(null, end = true)
                     is Item.Text -> {
-                        asked += item.text
+                        // A sentence taken just as the reading was stopped is not asked for.
+                        synchronized(asking) {
+                            if (stopped) return
+                            asked += item.text
+                        }
                         Clip(attempt { speak(item.text) }?.let { (bytes, type) -> decodeOrSay(bytes, type) })
                     }
                     is Item.Sound -> Clip(attempt { fetch(item.url) }?.let { (bytes, type) -> decodeOrSay(bytes, type) })
