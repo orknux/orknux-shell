@@ -4,7 +4,7 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
-## Unreleased
+## 1.0.38
 
 ### Added
 
@@ -32,7 +32,6 @@ refuses a tag with no section here.
 - A workspace with no transcription model, one with no speech model (answers
   are then shown and not read), and a computer with no microphone or no audio
   output are each said in words when voice mode starts.
-
 - Pictures pasted into the chat: Ctrl+V (or Alt+V) attaches a picture on the
   clipboard to the next message, shown in the line as a chip like
   `[image 1: 1280×720 png]` that Backspace takes out; files copied in a file
