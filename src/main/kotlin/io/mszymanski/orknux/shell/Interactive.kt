@@ -2066,8 +2066,20 @@ class Interactive(
         // Under the prompt the line editor draws it itself, fresh at every redraw (ShellLineReader).
         val st = status ?: return
         // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
-        val rule = theme.muted((if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
-        val lines = listOf(rule) + listOfNotNull(chips().takeIf { attachments.isNotEmpty() }?.let { " $it" }) + (" " + statusText())
+        val dash = if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-"
+        /*
+         * What goes with the next message is written into the rule, not on a row of its own: the bar is
+         * [barRows] tall always, and a row added under text drew the chips over the rule and ate the blank line
+         * above the prompt.
+         */
+        val rule = if (attachments.isEmpty()) {
+            theme.muted(dash.repeat((width() - 1).coerceAtLeast(1)))
+        } else {
+            val chipped = theme.muted(dash.repeat(2)) + " " + chips() + " "
+            // Each 📎 is two columns wide and counted as one: a rule one column too long wraps and moves the bar.
+            chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - attachments.size).coerceAtLeast(0)))
+        }
+        val lines = listOf(rule, " " + statusText())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })

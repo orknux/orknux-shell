@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.40
+
+### Fixed
+
+- Attaching a file or a picture no longer eats the blank line under what was
+  said or draws over the status bar's rule: what goes with the next message is
+  written into the rule, so the bar stays two rows tall.
+
 ## 1.0.39
 
 ### Added
