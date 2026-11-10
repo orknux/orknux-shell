@@ -204,7 +204,7 @@ class Interactive(
             theme.muted("Workspace ") + theme.text(workspace.name) + theme.muted(" · agent ") +
                 theme.text(agent?.name ?: "the one you last talked to") + theme.muted(" · mode ") + modeLabel(),
         )
-        say(theme.muted("/help for commands · @agent to ask another agent · ${keyName("details")} expands thoughts and tool calls · ${keyName("sessions")} sessions · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
+        say(theme.muted("/help for commands · @agent to ask another agent · ${keyName("details")} expands thoughts and tool calls · ${keyName("sessions")} sessions · ${pasteKey()} pastes a picture · Shift+Tab switches mode · Ctrl+C interrupts · Ctrl+D quits"))
         // A newer Shell is said here, with the rest of the welcome, rather than above the prompt whenever the look
         // came back. The look is given a moment; slower than that, the status bar says it once it knows.
         startingNews?.let { news ->
@@ -414,6 +414,14 @@ class Interactive(
             done
         }
     }
+
+    /**
+     * The key that pastes a picture here, as the person should press it: Alt+V in
+     * Windows Terminal - in PowerShell and in WSL alike, which it marks with
+     * WT_SESSION - since it keeps Ctrl+V for its own text-only paste and a picture
+     * never reaches the Shell that way. Ctrl+V everywhere else.
+     */
+    private fun pasteKey(): String = if (!System.getenv("WT_SESSION").isNullOrBlank()) "Alt+V" else "Ctrl+V"
 
     private fun pasteClipboard(r: LineReader) {
         val board = clipboard.getOrElse {
@@ -2543,7 +2551,7 @@ class Interactive(
             "Shift+Tab" to "switch mode: auto, ask, plan",
             keyName("details") to "expand thoughts and tool calls, and fold them again",
             keyName("sessions") to "this chat's sessions - its own and its agents'",
-            "Ctrl+V (or Alt+V)" to "paste: a picture on the clipboard is attached to the next message, as a chip Backspace takes out",
+            (if (pasteKey() == "Alt+V") "Alt+V (Ctrl+V is Windows Terminal's)" else "Ctrl+V (or Alt+V)") to "paste: a picture on the clipboard is attached to the next message, as a chip Backspace takes out",
             "Ctrl+L" to "clear the screen",
             "Ctrl+C / Esc" to "interrupt the answer (twice: stop waiting)",
             "Ctrl+D" to "quit",

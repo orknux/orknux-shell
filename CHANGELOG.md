@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.44
+
+### Added
+
+- The welcome lines and `/help` name the key that pastes a picture where the
+  Shell runs: Alt+V in Windows Terminal (in PowerShell and in WSL), which keeps
+  Ctrl+V for its own text-only paste, and Ctrl+V everywhere else.
+
 ## 1.0.43
 
 ### Fixed
