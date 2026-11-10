@@ -66,7 +66,9 @@ class ClipboardTest {
                 listOf("wl-paste", "--no-newline", "--type", "text/uri-list") to "file:///home/a/My%20shot.png\r\nfile:///home/a/b.txt\n".toByteArray(),
             ),
         )
-        assertEquals(Clipped.Files(listOf("/home/a/My shot.png", "/home/a/b.txt")), WaylandClipboard(files).read())
+        // In the platform's own spelling: the tests run on Windows too, where a file URI's path comes back with backslashes.
+        val expected = listOf("/home/a/My shot.png", "/home/a/b.txt").map { java.nio.file.Path.of(it).toString() }
+        assertEquals(Clipped.Files(expected), WaylandClipboard(files).read())
 
         val text = Fake(mapOf(listOf("wl-paste", "--list-types") to "text/plain;charset=utf-8".toByteArray(), listOf("wl-paste", "--no-newline") to "zażółć".toByteArray()))
         assertEquals(Clipped.Text("zażółć"), WaylandClipboard(text).read())
