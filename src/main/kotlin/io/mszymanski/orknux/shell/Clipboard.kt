@@ -216,10 +216,20 @@ class WindowsClipboard(
     private fun converted(path: String, flag: String): String =
         runner.output(listOf("wslpath", flag, path))?.toString(Charsets.UTF_8)?.trim()?.takeIf { it.isNotEmpty() } ?: path
 
-    private fun ps(script: String) = listOf(shell, "-NoProfile", "-NonInteractive", "-STA", "-Command", script)
+    /**
+     * The script as `-EncodedCommand`: base64 of its UTF-16, so nothing in it is
+     * quoted on the way. Handed over as plain `-Command` text, Java on Windows
+     * does not escape the double quotes inside it, PowerShell was given a broken
+     * script, and its failure read as an empty clipboard. (WSL quotes properly,
+     * which is why the same script worked there.)
+     */
+    private fun ps(script: String) = command(shell, script)
 
     override fun read(): Clipped {
-        val out = runner.output(ps(READ))?.toString(Charsets.US_ASCII)?.trim() ?: return Clipped.Empty
+        val (code, bytes) = runner.run(ps(READ), null, true)
+        // A PowerShell that failed is said as one, not taken for a clipboard with nothing on it.
+        if (code != 0) throw OrknuxException("PowerShell could not read the clipboard (it exited with $code).")
+        val out = bytes.toString(Charsets.US_ASCII).trim()
         val tag = out.substringBefore(':')
         val body = runCatching { Base64.getDecoder().decode(out.substringAfter(':', "")) }.getOrNull() ?: return Clipped.Empty
         return when (tag) {
@@ -243,6 +253,10 @@ class WindowsClipboard(
     }
 
     companion object {
+        /** How [script] is run by [shell]; see [ps]. */
+        fun command(shell: String, script: String): List<String> =
+            listOf(shell, "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE)))
+
         val READ = """
             Add-Type -AssemblyName System.Windows.Forms, System.Drawing
             ${'$'}c = [System.Windows.Forms.Clipboard]

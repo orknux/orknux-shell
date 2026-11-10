@@ -138,8 +138,34 @@ class ClipboardTest {
         assertEquals(Clipped.Text("hi"), WindowsClipboard(answer("TEXT:aGk=")).read())
         assertEquals(Clipped.Empty, WindowsClipboard(answer("EMPTY:")).read())
         val ran = Fake(mapOf(listOf("powershell") to "EMPTY:".toByteArray())).also { WindowsClipboard(it).read() }.ran.single().first
-        assertEquals(listOf("powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command"), ran.take(5))
-        assertTrue(ran[5].contains("GetImage()") && ran[5].contains("GetFileDropList()"))
+        // Encoded, so the double quotes in it survive Windows' command line: nothing in the argument needs quoting.
+        assertEquals(listOf("powershell", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand"), ran.take(5))
+        assertTrue(ran[5].none { it == '"' || it == ' ' || it == '\n' })
+        val script = String(Base64.getDecoder().decode(ran[5]), Charsets.UTF_16LE)
+        assertTrue(script.contains("GetImage()") && script.contains("GetFileDropList()"))
+        // And a PowerShell that failed is said, not read as an empty clipboard.
+        val failed = runCatching { WindowsClipboard(Fake(emptyMap())).read() }.exceptionOrNull()
+        assertTrue(failed?.message?.contains("PowerShell could not read the clipboard") == true, failed?.message)
+    }
+
+    /**
+     * The real PowerShell, on a Windows machine - the release build's - which is
+     * the only place the script's way onto the command line can be checked: a
+     * fake runner is handed the arguments as they are, and 1.0.42 passed every
+     * test while Windows' PowerShell was given a broken script. A script that
+     * reaches it whole answers with one of its tags, whatever the clipboard holds.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    fun `the real PowerShell runs the script whole`() {
+        val (code, out) = Clipboards.PROCESSES.run(
+            WindowsClipboard.command("powershell", WindowsClipboard.READ),
+            null,
+            true,
+        )
+        val said = out.toString(Charsets.US_ASCII).trim()
+        assertEquals(0, code, said)
+        assertTrue(listOf("IMAGE:", "FILES:", "TEXT:", "EMPTY:").any { said.startsWith(it) }, said)
     }
 
     // ---- writing -------------------------------------------------------------------------------
@@ -156,7 +182,7 @@ class ClipboardTest {
 
         val windows = Fake(mapOf(listOf("powershell") to ByteArray(0)))
         WindowsClipboard(windows).write(Picture(red, "image/png"))
-        val script = windows.ran.single().first.last()
+        val script = String(Base64.getDecoder().decode(windows.ran.single().first.last()), Charsets.UTF_16LE)
         assertTrue(script.contains("SetDataObject") && script.contains("orknux-copy-") && script.contains(".png"), script)
 
         // Detached into a session of its own where setsid is there, so the picture outlives the Shell.

@@ -4,6 +4,17 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.43
+
+### Fixed
+
+- Pasting on Windows said "The clipboard holds nothing to paste" whatever it
+  held: Java on Windows does not escape the double quotes in a command-line
+  argument, so PowerShell was handed a broken script, and its failure read as
+  an empty clipboard. The script now goes as `-EncodedCommand`, and a
+  PowerShell that fails is said as one. A test runs the real PowerShell on the
+  Windows build so this cannot pass unnoticed again.
+
 ## 1.0.42
 
 ### Fixed
