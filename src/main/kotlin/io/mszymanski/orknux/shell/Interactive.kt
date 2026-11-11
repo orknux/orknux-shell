@@ -3380,7 +3380,15 @@ class ShellLineReader(
     }
 
     override fun handleSignal(signal: Terminal.Signal) {
-        super.handleSignal(signal)
-        if (signal == Terminal.Signal.WINCH) resized()
+        if (signal == Terminal.Signal.WINCH) {
+            // JLine's own WINCH redisplay leaves its display tracking the old prompt's place, which then misplaced the
+            // prompt our repaint draws after it - a blank row between the input and the bar at some widths. Take only
+            // the size from it and let the repaint redraw from a clean slate.
+            size.copy(terminal.size)
+            display.resize(size.rows, size.columns)
+            resized()
+        } else {
+            super.handleSignal(signal)
+        }
     }
 }

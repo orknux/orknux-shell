@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.52
+
+### Fixed
+
+- Resizing the terminal no longer leaves a blank row between the input and the
+  status bar. The reader redrew the prompt against where it had been before the
+  resize, which at some widths left it a row high; the redraw now starts from a
+  clean slate, so the input sits flush under its frame at every width.
+
 ## 1.0.51
 
 ### Fixed
