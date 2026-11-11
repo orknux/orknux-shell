@@ -416,12 +416,15 @@ class Interactive(
     }
 
     /**
-     * The key that pastes a picture here, as the person should press it: Alt+V in
-     * Windows Terminal - in PowerShell and in WSL alike, which it marks with
-     * WT_SESSION - since it keeps Ctrl+V for its own text-only paste and a picture
-     * never reaches the Shell that way. Ctrl+V everywhere else.
+     * The key that pastes a picture here, as the person should press it. Alt+V
+     * on Windows and in WSL: every terminal there - Windows Terminal, VS Code's,
+     * the console - keeps Ctrl+V for its own text-only paste, so the key never
+     * reaches the Shell, and WT_SESSION alone missed the ones that do not set it
+     * and the WSL shells it is not passed into. Ctrl+V elsewhere, where a
+     * terminal pastes with Ctrl+Shift+V and leaves Ctrl+V to the program.
      */
-    private fun pasteKey(): String = if (!System.getenv("WT_SESSION").isNullOrBlank()) "Alt+V" else "Ctrl+V"
+    private fun pasteKey(): String =
+        if (!System.getenv("WT_SESSION").isNullOrBlank() || Platform.isWindows() || Clipboards.isWsl()) "Alt+V" else "Ctrl+V"
 
     private fun pasteClipboard(r: LineReader) {
         val board = clipboard.getOrElse {
@@ -1468,8 +1471,10 @@ class Interactive(
                 addAll(slashRows(aheadChoices, at, if (runs) "Enter runs now" else "Enter queues it for after this turn"))
             }
         }
-        // A blank line between what is happening and what is being written.
-        if (status != null) return listOf("") + typing
+        // A blank line between what is happening and what is being written, and one under it, so the turn's last
+        // line is not pressed against the status bar. Drawn here, in the turn, not as a row of the bar: a bar row
+        // stood between the idle prompt and the rule as well, where nothing should.
+        if (status != null) return listOf("") + typing + ""
         return listOf("") + typing + listOfNotNull(rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())
     }
 
@@ -2067,11 +2072,11 @@ class Interactive(
     private val startedAt = System.currentTimeMillis()
 
     /**
-     * The status bar's height: a blank row, its rule and its row. Fixed, since JLine's status
+     * The status bar's height: its rule and its row. Fixed, since JLine's status
      * cannot change height under text without losing where the cursor is; the
      * workspace is in the bar at the top of the window instead.
      */
-    private fun barRows(): Int = 3
+    private fun barRows(): Int = 2
 
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
@@ -2098,8 +2103,7 @@ class Interactive(
             // Each 📎 is two columns wide and counted as one: a rule one column too long wraps and moves the bar.
             chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - attachments.size).coerceAtLeast(0)))
         }
-        // A blank row first: the line being written is not pressed against the rule.
-        val lines = listOf("", rule, " " + statusText())
+        val lines = listOf(rule, " " + statusText())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
@@ -2551,7 +2555,7 @@ class Interactive(
             "Shift+Tab" to "switch mode: auto, ask, plan",
             keyName("details") to "expand thoughts and tool calls, and fold them again",
             keyName("sessions") to "this chat's sessions - its own and its agents'",
-            (if (pasteKey() == "Alt+V") "Alt+V (Ctrl+V is Windows Terminal's)" else "Ctrl+V (or Alt+V)") to "paste: a picture on the clipboard is attached to the next message, as a chip Backspace takes out",
+            (if (pasteKey() == "Alt+V") "Alt+V (Ctrl+V is the terminal's own paste here)" else "Ctrl+V (or Alt+V)") to "paste: a picture on the clipboard is attached to the next message, as a chip Backspace takes out",
             "Ctrl+L" to "clear the screen",
             "Ctrl+C / Esc" to "interrupt the answer (twice: stop waiting)",
             "Ctrl+D" to "quit",

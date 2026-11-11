@@ -4,6 +4,19 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.45
+
+### Fixed
+
+- A blank row stood between the prompt and the status bar while nothing was
+  running, since 1.0.41 made it part of the bar. It is now drawn only during a
+  turn, under the line you type a queued message on, and the idle prompt sits on
+  the rule again.
+- The Shell named Ctrl+V as the picture paste key in Windows terminals that are
+  not Windows Terminal, and in WSL shells Windows Terminal's marker does not
+  reach. Every terminal on Windows keeps Ctrl+V for its own text paste, so it
+  now says Alt+V on Windows and in WSL alike.
+
 ## 1.0.44
 
 ### Added
