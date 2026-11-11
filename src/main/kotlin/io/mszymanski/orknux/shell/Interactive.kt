@@ -2084,7 +2084,10 @@ class Interactive(
             w.flush()
         }
         synchronized(out) { if (region.active) region.exclusive(draw) else draw() }
-        if (region.active) region.redraw() else if (::reader.isInitialized && phase == Phase.READING) runCatching { (reader as? ShellLineReader)?.redrawPrompt() }
+        // The prompt holds the rule above the input, and the reader keeps the string it was given: on a resize JLine
+        // redraws that same string, so the rule above stayed the width it was first drawn at while the one below - the
+        // bar's own - followed. Set it again from the current width before the reader draws it.
+        if (region.active) region.redraw() else if (::reader.isInitialized && phase == Phase.READING) runCatching { (reader as? ShellLineReader)?.apply { setPrompt(framedPrompt()); redrawPrompt() } }
         terminal.writer().print(LiveRegion.SYNC_END)
         terminal.writer().flush()
     }

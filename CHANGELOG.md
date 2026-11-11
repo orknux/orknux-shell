@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.51
+
+### Fixed
+
+- The rule above the input now follows the window when the terminal is made
+  narrower or wider. It is drawn as part of the prompt, which the reader kept as
+  it was first handed it, so on a resize it stayed the width it started at while
+  the rule below - the status bar's own - moved; both follow the width now.
+
 ## 1.0.50
 
 ### Added
