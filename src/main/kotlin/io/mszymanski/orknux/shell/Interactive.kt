@@ -727,6 +727,7 @@ class Interactive(
                 // The interruption leaves the framed prompt on the screen; clear its line and the rule above it, as an
                 // empty Enter does, so a run of Ctrl+C does not stack a frame and a hint each time.
                 if (region.ansi) {
+                    Trace.log("ctrl-c cursorRow=${cursorRow()} height=${terminal.height}")
                     terminal.writer().print("\u001b[1A\u001b[2K".repeat(2))
                     pullDown(2)
                 }
@@ -2083,6 +2084,7 @@ class Interactive(
             head.forEach { w.print(it + "\r\n") }
             if (gap > 0) w.print("\r\n".repeat(gap))
             rest.forEach { w.print(it + "\r\n") }
+            Trace.log("repaint th=[${Thread.currentThread().name}] h=$rows w=$wide room=$room below=$below bars=${barRows()} welcome=$welcomeLines head=${head.size} rest=${rest.size} rowsOf(all)=${rowsOf(lines)} gap=$gap phase=$phase regionActive=${region.active} statusNull=${status == null}")
             region.forget()
             region.dropHeld()
             // So the live block puts its blank line under the last one written, as it does after any other line.
@@ -3387,6 +3389,7 @@ class ShellLineReader(
 
     override fun handleSignal(signal: Terminal.Signal) {
         if (signal == Terminal.Signal.WINCH) {
+            Trace.log("WINCH th=[${Thread.currentThread().name}] termSize=${terminal.size.columns}x${terminal.size.rows}")
             // JLine's own WINCH redisplay leaves its display tracking the old prompt's place, which then misplaced the
             // prompt our repaint draws after it - a blank row between the input and the bar at some widths. Take only
             // the size from it and let the repaint redraw from a clean slate.

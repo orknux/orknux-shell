@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.54
+
+### Changed
+
+- The trace log (set `ORKNUX_SHELL_TRACE` to a file path) now records the window
+  size and the layout numbers on every resize, and the cursor row on Ctrl+C, to
+  pin down a drawing problem that only shows on some terminals. No change to how
+  the shell behaves otherwise.
+
 ## 1.0.53
 
 ### Fixed
