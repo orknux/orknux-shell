@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.49
+
+### Changed
+
+- The frame now holds while a turn runs. The line you type to queue a message
+  for after the turn gets the same rule above it as the idle prompt, so the live
+  input is framed the same way whether or not a turn is going - until now the top
+  rule was there only at the idle prompt.
+
 ## 1.0.48
 
 ### Changed

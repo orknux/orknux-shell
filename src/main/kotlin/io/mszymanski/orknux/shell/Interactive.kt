@@ -1484,10 +1484,10 @@ class Interactive(
                 addAll(slashRows(aheadChoices, at, if (runs) "Enter runs now" else "Enter queues it for after this turn"))
             }
         }
-        // A blank line between what is happening and what is being written, and one under it, so the turn's last
-        // line is not pressed against the status bar. Drawn here, in the turn, not as a row of the bar: a bar row
-        // stood between the idle prompt and the rule as well, where nothing should.
-        if (status != null) return listOf("") + typing + ""
+        // The line being written is framed as the idle prompt is: a rule above it, and the status bar's own rule
+        // below. A blank sits between what is happening (the spinner) and that frame, so the two do not run together.
+        // The frame's lower rule is the bar's first row, so nothing stands between the input and it.
+        if (status != null) return listOf("", rule()) + typing
         return listOf("") + typing + listOf(rule(), " " + statusText(), "", " " + shortcuts())
     }
 
