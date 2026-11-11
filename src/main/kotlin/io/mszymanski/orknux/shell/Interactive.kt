@@ -1182,7 +1182,7 @@ class Interactive(
         terminal.attributes = raw
         region.thinkingHint = null
         region.phase("voice", line())
-        region.start { listOf("", theme.muted(hint)) + if (status != null) emptyList() else listOf(rule(), " " + statusText(), " " + shortcuts()) }
+        region.start { listOf("", theme.muted(hint)) + if (status != null) emptyList() else listOf(rule(), " " + statusText(), "", " " + shortcuts()) }
         val input = terminal.reader()
         try {
             var n = 0
@@ -1476,7 +1476,7 @@ class Interactive(
         // line is not pressed against the status bar. Drawn here, in the turn, not as a row of the bar: a bar row
         // stood between the idle prompt and the rule as well, where nothing should.
         if (status != null) return listOf("") + typing + ""
-        return listOf("") + typing + listOfNotNull(rule(), chips(onRule()).takeIf { onRule().isNotEmpty() }, " " + statusText(), " " + shortcuts())
+        return listOf("") + typing + listOf(rule(), " " + statusText(), "", " " + shortcuts())
     }
 
     /** What the empty typing line says: where a message goes - this chat's main session, said while another is on the screen - and how to send it now. */
@@ -2073,12 +2073,13 @@ class Interactive(
     private val startedAt = System.currentTimeMillis()
 
     /**
-     * The status bar's height: its rule, its row, and the shortcuts row under it.
-     * Fixed, since JLine's status cannot change height under text without losing
-     * where the cursor is; the workspace is in the bar at the top of the window
-     * instead.
+     * The status bar's height: its rule, its row, a blank, and the shortcuts row
+     * under that - the blank so the shortcuts read as their own line and not a
+     * wrap of the status. Fixed, since JLine's status cannot change height under
+     * text without losing where the cursor is; the workspace is in the bar at the
+     * top of the window instead.
      */
-    private fun barRows(): Int = 3
+    private fun barRows(): Int = 4
 
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
@@ -2091,22 +2092,11 @@ class Interactive(
         }
         // Under the prompt the line editor draws it itself, fresh at every redraw (ShellLineReader).
         val st = status ?: return
-        // A rule across above it and a column in from the edge: the bar is a bar, not the last line of the answer.
+        // A plain rule, a column in from the edge: a bar, not the last line of the answer. What is attached is said
+        // on the status line and in the line's own chip, never on the rule - a picture pasted there was named twice.
         val dash = if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-"
-        /*
-         * What goes with the next message is written into the rule, not on a row of its own: the bar is
-         * [barRows] tall always, and a row added under text drew the chips over the rule and ate the blank line
-         * above the prompt.
-         */
-        val shown = onRule()
-        val rule = if (shown.isEmpty()) {
-            theme.muted(dash.repeat((width() - 1).coerceAtLeast(1)))
-        } else {
-            val chipped = theme.muted(dash.repeat(2)) + " " + chips(shown) + " "
-            // Each 📎 is two columns wide and counted as one: a rule one column too long wraps and moves the bar.
-            chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - shown.size).coerceAtLeast(0)))
-        }
-        val lines = listOf(rule, " " + statusText(), " " + shortcuts())
+        val rule = theme.muted(dash.repeat((width() - 1).coerceAtLeast(1)))
+        val lines = listOf(rule, " " + statusText(), "", " " + shortcuts())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
@@ -2119,16 +2109,14 @@ class Interactive(
     }
 
     /**
-     * The attachments the status-bar rule shows: those with no chip in the line
-     * being written, since a chip already names a pasted picture there and a
-     * copy on the rule said the same thing twice.
+     * Attachments waiting for the next message that the line being written does
+     * not already name with a chip - a `/attach`ed or `/paste`d file, not a
+     * picture pasted into the line. These get the 📎 on the status line; a chip
+     * in the line is reminder enough for the rest, and naming them twice was the
+     * clutter on the rule that is gone.
      */
-    private fun onRule(): List<Attachment> =
+    private fun unnamedAttachments(): List<Attachment> =
         attachments.filter { a -> imageChips.attachments.none { it.id == a.id } }
-
-    private fun chips(shown: List<Attachment>): String = shown.mapIndexed { i, a ->
-        theme.accent("📎 ") + theme.text(a.filename) + theme.muted(" ${size(a.sizeBytes)} ") + theme.muted("×${i + 1}")
-    }.joinToString("  ")
 
     private fun statusText(): String = statusParts().let { (left, right) -> oneRow(left, right) }
 
@@ -2194,7 +2182,16 @@ class Interactive(
         // The door takes a moment to open at the start, which is not news.
         val settled = System.currentTimeMillis() - startedAt > DEVICE_GRACE_MILLIS
         val device = if (::device.isInitialized && !device.connected && settled) theme.warning("commands cannot run here: reconnecting") else null
+        // What is attached and waiting for the next message, said here rather than on the rule. Not while a turn runs:
+        // the message it went with is in flight, no longer waiting, and the sent line already shows it.
+        val waiting = if (phase != Phase.TURN) unnamedAttachments() else emptyList()
+        val attached = when {
+            waiting.isEmpty() -> null
+            waiting.size == 1 -> theme.accent("📎 ") + theme.text(waiting.single().filename) + theme.muted(" ${size(waiting.single().sizeBytes)}")
+            else -> theme.accent("📎 ") + theme.text("${waiting.size} attached")
+        }
         val left = listOfNotNull(
+            attached,
             // No fallback word: "agent" read as an agent called that. Before the server has chosen, nothing is said.
             (c.agent?.name ?: c.chat?.agentName)?.let(theme::text),
             modeLabel(),

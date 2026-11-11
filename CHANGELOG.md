@@ -4,6 +4,16 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.47
+
+### Changed
+
+- An attached picture is no longer drawn on the status bar's rule - the rule is a
+  plain separator again, during a turn as well. A picture pasted into the line is
+  shown by its chip there; a `/attach`ed or `/paste`d file, which has no chip,
+  is named with a 📎 on the status line instead. A blank row now sits above the
+  shortcuts so they read as their own line.
+
 ## 1.0.46
 
 ### Added
