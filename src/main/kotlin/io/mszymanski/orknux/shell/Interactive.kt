@@ -867,6 +867,13 @@ class Interactive(
 
     private fun prompt(): String = theme.accent("› ")
 
+    /**
+     * The cursor on the queue line while a turn runs, where the region hides the terminal's own: a bar on its beat
+     * and a space off it, so it blinks without the text beside it shifting. Keyed to the clock, not the frame, so it
+     * blinks at the same rate however often the region is redrawn - the region repaints ten times a second anyway.
+     */
+    private fun caret(): String = if ((System.currentTimeMillis() / 530) % 2 == 0L) theme.text("▏") else " "
+
     /** A message the person wrote, as the conversation shows it: the prompt's mark, and on its own background. */
     private fun userLines(text: String): List<String> =
         text.split('\n').mapIndexed { i, l -> theme.message((if (i == 0) prompt() else "  ") + theme.text(l)) }
@@ -1477,7 +1484,7 @@ class Interactive(
                 add(theme.muted(label) + theme.text(text) + (if (!following && i == queued.lastIndex && ahead.isEmpty()) theme.muted(" · ${keyName("send-now")} sends now") else ""))
             }
             if (queued.isNotEmpty() && region.active) add("")
-            if (region.active) add(prompt() + ahead.toString() + theme.muted(if (ahead.isEmpty()) typingHint() else "▏"))
+            if (region.active) add(prompt() + ahead.toString() + caret() + (if (ahead.isEmpty()) theme.muted(typingHint()) else ""))
             if (region.active && aheadChoices.isNotEmpty()) {
                 val at = aheadAt.coerceIn(0, aheadChoices.lastIndex)
                 val runs = SlashCommands.parse(aheadChoices[at].value.trim())?.name in WHILE_WORKING

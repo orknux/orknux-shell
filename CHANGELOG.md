@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.50
+
+### Added
+
+- The line you type while a turn runs now has a cursor that blinks, so it reads
+  as a live input and not a label. It sits where the next character will land -
+  after what you have typed, or at the start of the line when it is still empty
+  and only its hint is shown.
+
 ## 1.0.49
 
 ### Changed
