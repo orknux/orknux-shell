@@ -4,6 +4,14 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.53
+
+### Fixed
+
+- Ctrl+C at the prompt no longer leaves the frame behind. The interruption kept
+  the rule above the input and its line on the screen, so a run of Ctrl+C stacked
+  a frame and a hint each time; the frame is cleared now, as an empty Enter does.
+
 ## 1.0.52
 
 ### Fixed

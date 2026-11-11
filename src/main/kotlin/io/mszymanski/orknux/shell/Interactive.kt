@@ -724,6 +724,12 @@ class Interactive(
                     sessionsByKey()
                     continue
                 }
+                // The interruption leaves the framed prompt on the screen; clear its line and the rule above it, as an
+                // empty Enter does, so a run of Ctrl+C does not stack a frame and a hint each time.
+                if (region.ansi) {
+                    terminal.writer().print("\u001b[1A\u001b[2K".repeat(2))
+                    pullDown(2)
+                }
                 if (interrupted.partialLine.isNullOrEmpty()) say(theme.muted("(Ctrl+D or /quit to leave)"))
                 continue
             } catch (_: EndOfFileException) {

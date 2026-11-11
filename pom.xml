@@ -6,7 +6,7 @@
 
     <groupId>io.mszymanski.orknux</groupId>
     <artifactId>orknux-shell</artifactId>
-    <version>1.0.52</version>
+    <version>1.0.53</version>
     <name>Orknux Shell</name>
     <description>Orknux in the terminal: a chat with an agent that can run commands on this computer.</description>
 
