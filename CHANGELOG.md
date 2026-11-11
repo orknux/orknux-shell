@@ -4,6 +4,15 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.48
+
+### Changed
+
+- The line you type is now framed by a rule above it as well as the one below,
+  both in Orknux's own blue, so where you write stands apart from the answer
+  above and the status below. The rule frames only the live input - a sent
+  message keeps none of it.
+
 ## 1.0.47
 
 ### Changed

@@ -703,7 +703,7 @@ class Interactive(
                 phase = Phase.READING
                 if (approvals.isNotEmpty()) continue
                 val buffer = prefill.also { prefill = null }
-                reader.readLine(prompt(), null, null as MaskingCallback?, buffer)
+                reader.readLine(framedPrompt(), null, null as MaskingCallback?, buffer)
             } catch (interrupted: UserInterruptException) {
                 if (wakeForApproval) {
                     wakeForApproval = false
@@ -765,10 +765,11 @@ class Interactive(
                 continue
             }
             if (text.isEmpty()) {
-                // An empty Enter leaves no bare prompt behind: its row is cleared and the screen comes back down.
+                // An empty Enter leaves no bare prompt behind: its row and the rule above it are cleared, and the
+                // screen comes back down by both.
                 if (region.ansi) {
-                    terminal.writer().print("\u001b[1A\u001b[2K")
-                    pullDown(1)
+                    terminal.writer().print("\u001b[1A\u001b[2K".repeat(2))
+                    pullDown(2)
                 }
                 continue
             }
@@ -881,7 +882,9 @@ class Interactive(
             return
         }
         val w = width()
-        val rows = typed.split('\n').sumOf { ((visibleLength(it) + 2 - 1) / w + 1).coerceAtLeast(1) }
+        // The framed prompt draws a rule on the row above the input, so one extra row is cleared with it and left
+        // out of the echo - the rule frames what is being written, not what was sent.
+        val rows = 1 + typed.split('\n').sumOf { ((visibleLength(it) + 2 - 1) / w + 1).coerceAtLeast(1) }
         terminal.writer().print("\u001b[${rows}A" + "\u001b[2K\u001b[1B".repeat(rows) + "\u001b[${rows}A\r")
         terminal.writer().flush()
         lastBlank = false
@@ -1371,8 +1374,17 @@ class Interactive(
         footer()
     }
 
+    /** A full-width rule in the brand's own colour, the line that frames the input above and below. */
     private fun rule(): String =
-        theme.muted((if (LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
+        theme.accent((if (LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-").repeat((width() - 1).coerceAtLeast(1)))
+
+    /**
+     * The editing prompt with a rule above it, so the line being written sits
+     * between two rules of its own - this one and the status bar's. A two-line
+     * prompt: the rule, then `› `, the cursor after it. The rule is redrawn with
+     * the prompt, so it stays put through a clear, a resize or the list closing.
+     */
+    private fun framedPrompt(): String = rule() + "\n" + prompt()
 
     /** Under the prompt while a line is read: the list of commands under a /, where it is open. */
     private fun underPrompt(): List<String> =
@@ -2095,7 +2107,7 @@ class Interactive(
         // A plain rule, a column in from the edge: a bar, not the last line of the answer. What is attached is said
         // on the status line and in the line's own chip, never on the rule - a picture pasted there was named twice.
         val dash = if (region.ansi && LiveRegion.unicodeFor(terminal.encoding()?.name())) "─" else "-"
-        val rule = theme.muted(dash.repeat((width() - 1).coerceAtLeast(1)))
+        val rule = theme.accent(dash.repeat((width() - 1).coerceAtLeast(1)))
         val lines = listOf(rule, " " + statusText(), "", " " + shortcuts())
         val draw = {
             runCatching {
