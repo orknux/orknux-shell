@@ -498,11 +498,12 @@ class Interactive(
     private fun pastePicture(r: LineReader, file: Path) {
         val bytes = try { Files.readAllBytes(file) } catch (failed: java.io.IOException) { say(theme.danger("${file.fileName} could not be read: ${failed.message}")); return }
         val type = Pictures.sniff(bytes) ?: Pictures.typeOf(file.fileName.toString()) ?: "application/octet-stream"
-        pasteBytes(r, Picture(bytes, type), file.fileName.toString())
+        // The chip shows the path it came from, not just the name the upload keeps.
+        pasteBytes(r, Picture(bytes, type), file.fileName.toString(), label = file.toString())
     }
 
     /** Uploads a pasted picture at once - as `/attach` uploads a file - and puts its chip in the line. */
-    private fun pasteBytes(r: LineReader, picture: Picture, filename: String? = null) {
+    private fun pasteBytes(r: LineReader, picture: Picture, filename: String? = null, label: String? = null) {
         val name = filename ?: "pasted-image-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.${picture.extension}"
         val kept = try {
             api.uploadPicture(conversation.workspace.id, name, picture.contentType, picture.bytes)
@@ -511,7 +512,7 @@ class Interactive(
             return
         }
         attachments += kept
-        val chip = imageChips.add(kept, picture)
+        val chip = imageChips.add(kept, label ?: kept.filename, size(kept.sizeBytes))
         val buffer = r.buffer.toString()
         val at = r.buffer.cursor()
         // A chip is a word of its own.
@@ -1181,7 +1182,7 @@ class Interactive(
         terminal.attributes = raw
         region.thinkingHint = null
         region.phase("voice", line())
-        region.start { listOf("", theme.muted(hint)) + if (status != null) emptyList() else listOf(rule(), " " + statusText()) }
+        region.start { listOf("", theme.muted(hint)) + if (status != null) emptyList() else listOf(rule(), " " + statusText(), " " + shortcuts()) }
         val input = terminal.reader()
         try {
             var n = 0
@@ -1475,7 +1476,7 @@ class Interactive(
         // line is not pressed against the status bar. Drawn here, in the turn, not as a row of the bar: a bar row
         // stood between the idle prompt and the rule as well, where nothing should.
         if (status != null) return listOf("") + typing + ""
-        return listOf("") + typing + listOfNotNull(rule(), chips().takeIf { attachments.isNotEmpty() }, " " + statusText())
+        return listOf("") + typing + listOfNotNull(rule(), chips(onRule()).takeIf { onRule().isNotEmpty() }, " " + statusText(), " " + shortcuts())
     }
 
     /** What the empty typing line says: where a message goes - this chat's main session, said while another is on the screen - and how to send it now. */
@@ -2072,11 +2073,12 @@ class Interactive(
     private val startedAt = System.currentTimeMillis()
 
     /**
-     * The status bar's height: its rule and its row. Fixed, since JLine's status
-     * cannot change height under text without losing where the cursor is; the
-     * workspace is in the bar at the top of the window instead.
+     * The status bar's height: its rule, its row, and the shortcuts row under it.
+     * Fixed, since JLine's status cannot change height under text without losing
+     * where the cursor is; the workspace is in the bar at the top of the window
+     * instead.
      */
-    private fun barRows(): Int = 2
+    private fun barRows(): Int = 3
 
     private fun width() = terminal.width.takeIf { it > 0 } ?: 100
 
@@ -2096,14 +2098,15 @@ class Interactive(
          * [barRows] tall always, and a row added under text drew the chips over the rule and ate the blank line
          * above the prompt.
          */
-        val rule = if (attachments.isEmpty()) {
+        val shown = onRule()
+        val rule = if (shown.isEmpty()) {
             theme.muted(dash.repeat((width() - 1).coerceAtLeast(1)))
         } else {
-            val chipped = theme.muted(dash.repeat(2)) + " " + chips() + " "
+            val chipped = theme.muted(dash.repeat(2)) + " " + chips(shown) + " "
             // Each 📎 is two columns wide and counted as one: a rule one column too long wraps and moves the bar.
-            chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - attachments.size).coerceAtLeast(0)))
+            chipped + theme.muted(dash.repeat((width() - 1 - visibleLength(chipped) - shown.size).coerceAtLeast(0)))
         }
-        val lines = listOf(rule, " " + statusText())
+        val lines = listOf(rule, " " + statusText(), " " + shortcuts())
         val draw = {
             runCatching {
                 st.update(lines.map { AttributedString.fromAnsi(LiveRegion.clip(it, width() - 1)) })
@@ -2115,11 +2118,37 @@ class Interactive(
         synchronized(out) { if (::region.isInitialized) region.exclusive(draw) else draw() }
     }
 
-    private fun chips(): String = attachments.mapIndexed { i, a ->
+    /**
+     * The attachments the status-bar rule shows: those with no chip in the line
+     * being written, since a chip already names a pasted picture there and a
+     * copy on the rule said the same thing twice.
+     */
+    private fun onRule(): List<Attachment> =
+        attachments.filter { a -> imageChips.attachments.none { it.id == a.id } }
+
+    private fun chips(shown: List<Attachment>): String = shown.mapIndexed { i, a ->
         theme.accent("📎 ") + theme.text(a.filename) + theme.muted(" ${size(a.sizeBytes)} ") + theme.muted("×${i + 1}")
     }.joinToString("  ")
 
     private fun statusText(): String = statusParts().let { (left, right) -> oneRow(left, right) }
+
+    /**
+     * The keys worth keeping in sight, on the bar's bottom row so they are there
+     * without a `/help` - the few that do something at any moment. Dimmed, as the
+     * furniture it is, not what is going on. The welcome line says the same once,
+     * in full, as the window scrolls; this is the short standing copy.
+     */
+    private fun shortcuts(): String = theme.muted(
+        listOf(
+            "/help",
+            "${keyName("details")} details",
+            "${keyName("sessions")} sessions",
+            "Shift+Tab mode",
+            "${pasteKey()} paste",
+            "Ctrl+C stop",
+            "Ctrl+D quit",
+        ).joinToString(" · ")
+    )
 
     /**
      * The workspace in the window's title - "Orknux · Private" - which the

@@ -215,10 +215,10 @@ class ClipboardTest {
         val chips = ImageChips()
         val one = attachment(1, "a.png")
         val two = attachment(2, "b.png")
-        val first = chips.add(one, Picture(red, "image/png"))
-        val second = chips.add(two, null)
-        assertEquals("[image 1: 64×48 png]", first)
-        assertEquals("[image 2: png]", second)
+        val first = chips.add(one, "a.png", "670 KB")
+        val second = chips.add(two, "/home/michal/pics/b.png", "1.2 MB")
+        assertEquals("[image 1: a.png · 670 KB]", first, "the name it was given and its size")
+        assertEquals("[image 2: /home/michal/pics/b.png · 1.2 MB]", second, "a file's own path, not just its name")
 
         val line = "what is in $first and $second"
         assertEquals(second to second.length, chips.endingAt(line, line.length))
@@ -232,7 +232,7 @@ class ClipboardTest {
         assertEquals(listOf(one), taken.pictures)
         assertEquals(listOf(two), taken.dropped)
         assertTrue(chips.isEmpty())
-        assertEquals("[image 1: png]", chips.add(two, null), "numbered from 1 again for the next message")
+        assertEquals("[image 1: b.png · 1.2 MB]", chips.add(two, "b.png", "1.2 MB"), "numbered from 1 again for the next message")
     }
 
     @Test

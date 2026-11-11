@@ -4,6 +4,21 @@ Each release's section is its notes, on GitHub and on orknux.ai, and is what
 `/update` shows before it installs. Written before the tag: the release job
 refuses a tag with no section here.
 
+## 1.0.46
+
+### Added
+
+- The keys worth keeping in sight - `/help`, details, sessions, mode, paste,
+  stop, quit - now stand on a row of their own at the foot of the status bar, so
+  they are there without the welcome line having to be scrolled back to.
+
+### Changed
+
+- A pasted picture's chip in the line now carries its name (or the path it came
+  from) and its size in KB or MB - `[image 1: cat.png · 1.2 MB]` - instead of its
+  pixel dimensions, and the same picture is no longer named a second time on the
+  status bar while you write. One picture, one indicator, where you are typing.
+
 ## 1.0.45
 
 ### Fixed

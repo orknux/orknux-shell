@@ -347,11 +347,15 @@ class ImageChips {
 
     fun isEmpty() = held.isEmpty()
 
-    /** The chip for [attachment], a picture of [picture]'s size and type, numbered in the line. */
-    fun add(attachment: Attachment, picture: Picture?): String {
-        val type = picture?.extension ?: Pictures.typeOf(attachment.filename)?.let(Pictures::extensionOf) ?: "image"
-        val size = picture?.size?.let { (w, h) -> "$w×$h " } ?: ""
-        val chip = "[image ${next++}: $size$type]"
+    /**
+     * The chip for [attachment], showing where it came from - [label], a path
+     * for a file or the uploaded name for clipboard bytes - and how big it is
+     * ([size], in KB or MB). Numbered in the line. The chip's text stands in the
+     * line for the attachment and is taken back out when the line is sent, so it
+     * is for the eye, not the model.
+     */
+    fun add(attachment: Attachment, label: String, size: String): String {
+        val chip = "[image ${next++}: $label · $size]"
         held[chip] = attachment
         return chip
     }
